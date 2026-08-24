@@ -1,5 +1,6 @@
-import "server-only";
-
+// This module is also imported by `tsx scripts/bootstrap-admin.ts` during Docker/Render
+// startup. `import "server-only"` throws outside the Next.js bundler, so it cannot be used here.
+// Loaded by `tsx` during Docker/Render startup. `import "server-only"` throws outside Next.js.
 import { hashPassword } from "@/lib/auth/password";
 import { getEnv } from "@/lib/config/env";
 import { prisma } from "@/lib/db/prisma";
