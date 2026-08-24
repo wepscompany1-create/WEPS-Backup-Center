@@ -11,6 +11,10 @@ export const restoreTestBodySchema = z.object({
   backupId: z.string().trim().min(1).max(80),
 });
 
+export const testEmailSchema = z.object({
+  email: z.string().trim().email("بريد غير صالح").max(254),
+});
+
 export const auditQuerySchema = z.object({
   action: z.string().trim().min(1).max(80).optional(),
   result: z.enum(["SUCCESS", "FAILURE", "WARNING"]).optional(),

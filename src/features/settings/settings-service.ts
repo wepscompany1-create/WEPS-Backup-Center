@@ -7,6 +7,9 @@ import { computeNextScheduledBackupAt, isValidLocalTime } from "@/lib/scheduler/
 import { audit, AuditActions } from "@/lib/audit";
 import { sendTestEmail } from "@/features/notifications/email-service";
 import { AppError, ErrorCodes } from "@/lib/errors";
+import { testEmailSchema } from "@/lib/validation/api";
+
+export { testEmailSchema };
 
 export const settingsUpdateSchema = z.object({
   scheduleEnabled: z.boolean().optional(),
@@ -74,13 +77,22 @@ export async function updateSettings(input: z.infer<typeof settingsUpdateSchema>
   return updated;
 }
 
-export async function triggerTestEmail(actorId?: string) {
-  const result = await sendTestEmail();
+export async function triggerTestEmail(email: string, actorId?: string) {
+  const parsed = testEmailSchema.safeParse({ email });
+  if (!parsed.success) {
+    throw new AppError({ code: ErrorCodes.VALIDATION_ERROR });
+  }
+
+  const result = await sendTestEmail(parsed.data.email);
   await audit({
     actorId,
     action: AuditActions.EMAIL_TEST_SENT,
     resourceType: "Notification",
     result: result.sent ? "SUCCESS" : "FAILURE",
+    metadata: {
+      sent: result.sent,
+      reason: result.reason,
+    },
   });
   return result;
 }

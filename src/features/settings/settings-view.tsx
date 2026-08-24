@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTimeAr } from "@/lib/format";
+import { EMAIL_USER_MESSAGES, type EmailSendReason } from "@/features/notifications/email-result";
+import { testEmailSchema } from "@/lib/validation/api";
 
 type Payload = {
   settings: {
@@ -40,6 +42,7 @@ export function SettingsView() {
   const [email, setEmail] = useState("");
   const [time, setTime] = useState("03:00");
   const [enabled, setEnabled] = useState(true);
+  const [testingEmail, setTestingEmail] = useState(false);
 
   async function load() {
     const response = await fetch("/api/settings");
@@ -79,10 +82,53 @@ export function SettingsView() {
   }
 
   async function testEmail() {
-    const response = await fetch("/api/settings/test-email", { method: "POST" });
-    const json = await response.json();
-    if (json.sent) toast.success("أُرسلت رسالة الاختبار");
-    else toast.error("تعذر إرسال رسالة الاختبار");
+    if (testingEmail) return;
+    const parsed = testEmailSchema.safeParse({ email });
+    if (!parsed.success) {
+      toast.error("أدخل عنوان بريد صالح قبل إرسال الاختبار.");
+      return;
+    }
+
+    setTestingEmail(true);
+    try {
+      const response = await fetch("/api/settings/test-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: parsed.data.email }),
+      });
+      const json = (await response.json().catch(() => ({}))) as {
+        sent?: boolean;
+        message?: string;
+        reason?: EmailSendReason;
+        code?: string;
+      };
+
+      if (response.ok && json.sent) {
+        toast.success(json.message || EMAIL_USER_MESSAGES.SENT);
+        return;
+      }
+      if (response.status === 401 || json.code === "UNAUTHORIZED") {
+        toast.error("انتهت الجلسة. سجّل الدخول ثم أعد المحاولة.");
+        return;
+      }
+      if (json.message) {
+        toast.error(json.message);
+        return;
+      }
+      if (json.reason && json.reason in EMAIL_USER_MESSAGES) {
+        toast.error(EMAIL_USER_MESSAGES[json.reason]);
+        return;
+      }
+      if (response.status === 429) {
+        toast.error("تجاوزت حد طلبات اختبار البريد. حاول لاحقاً.");
+        return;
+      }
+      toast.error("تعذر إرسال رسالة الاختبار");
+    } catch {
+      toast.error("تعذر الاتصال بالخادم.");
+    } finally {
+      setTestingEmail(false);
+    }
   }
 
   if (!data) return <Skeleton className="h-96" />;
@@ -135,8 +181,14 @@ export function SettingsView() {
           <Toggle label="نجاح الاستعادة" checked={data.settings.notifyOnRestoreSuccess} onChange={(value) => void save({ notifyOnRestoreSuccess: value })} />
           <Toggle label="فشل الاستعادة" checked={data.settings.notifyOnRestoreFailure} onChange={(value) => void save({ notifyOnRestoreFailure: value })} />
           <Toggle label="فشل السلامة" checked={data.settings.notifyOnIntegrityFailure} onChange={(value) => void save({ notifyOnIntegrityFailure: value })} />
-          <Button variant="outline" className="cursor-pointer" onClick={() => void testEmail()}>
-            إرسال رسالة اختبار
+          <Button
+            id="send-test-email"
+            variant="outline"
+            className="cursor-pointer"
+            disabled={testingEmail}
+            onClick={() => void testEmail()}
+          >
+            {testingEmail ? "جارٍ الإرسال..." : "إرسال رسالة اختبار"}
           </Button>
         </CardContent>
       </Card>

@@ -32,6 +32,7 @@ export const ErrorCodes = {
   UNSAFE_DATABASE_NAME: "UNSAFE_DATABASE_NAME",
   LOGIN_LOCKED: "LOGIN_LOCKED",
   LOGIN_FAILED: "LOGIN_FAILED",
+  RATE_LIMITED: "RATE_LIMITED",
   INTERNAL_ERROR: "INTERNAL_ERROR",
 } as const;
 
@@ -69,6 +70,7 @@ const arabicMessages: Record<ErrorCode, string> = {
   UNSAFE_DATABASE_NAME: "اسم قاعدة البيانات المؤقتة غير آمن.",
   LOGIN_LOCKED: "تم قفل الحساب مؤقتاً بعد محاولات دخول فاشلة.",
   LOGIN_FAILED: "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
+  RATE_LIMITED: "تجاوزت حد الطلبات. حاول لاحقاً.",
   INTERNAL_ERROR: "حدث خطأ غير متوقع. راجع رقم المرجع مع المسؤول.",
 };
 
@@ -137,6 +139,10 @@ function defaultStatus(code: ErrorCode) {
       return 401;
     case ErrorCodes.LOGIN_LOCKED:
       return 423;
+    case ErrorCodes.RATE_LIMITED:
+      return 429;
+    case ErrorCodes.RESEND_FAILED:
+      return 502;
     case ErrorCodes.VALIDATION_ERROR:
     case ErrorCodes.PATH_TRAVERSAL:
     case ErrorCodes.UNSAFE_DATABASE_NAME:

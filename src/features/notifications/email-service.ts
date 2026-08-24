@@ -7,11 +7,59 @@ import { prisma } from "@/lib/db/prisma";
 import { getSystemSettings } from "@/lib/db/settings";
 import { logger } from "@/lib/logger";
 import { formatBytes, formatDateTimeAr } from "@/lib/format";
+import {
+  EMAIL_SAFE_LOG_MESSAGES,
+  EmailSendReasons,
+  emailSendResult,
+  type EmailSendReason,
+  type EmailSendResult,
+} from "@/features/notifications/email-result";
 
 function getClient() {
   const env = getEnv();
   if (!env.RESEND_API_KEY) return null;
   return new Resend(env.RESEND_API_KEY);
+}
+
+async function recordAttempt(options: {
+  event: "BACKUP_SUCCESS" | "BACKUP_FAILURE" | "RESTORE_SUCCESS" | "RESTORE_FAILURE" | "INTEGRITY_FAILURE" | "DISK_WARNING" | "TEST";
+  subject: string;
+  resourceType?: string;
+  resourceId?: string;
+  toEmail: string;
+  result: EmailSendResult;
+}) {
+  try {
+    if (options.result.sent) {
+      await prisma.notificationLog.create({
+        data: {
+          event: options.event,
+          status: "SENT",
+          toEmail: options.toEmail,
+          subject: options.subject,
+          resourceType: options.resourceType,
+          resourceId: options.resourceId,
+        },
+      });
+      return;
+    }
+
+    const safe = EMAIL_SAFE_LOG_MESSAGES[options.result.reason];
+    await prisma.notificationLog.create({
+      data: {
+        event: options.event,
+        status: "FAILED",
+        toEmail: options.toEmail,
+        subject: options.subject,
+        errorCode: safe.code,
+        errorMessage: safe.message,
+        resourceType: options.resourceType,
+        resourceId: options.resourceId,
+      },
+    });
+  } catch (error) {
+    logger.warn({ err: error, event: options.event }, "Failed to write notification log");
+  }
 }
 
 async function sendMail(options: {
@@ -21,32 +69,39 @@ async function sendMail(options: {
   resourceType?: string;
   resourceId?: string;
   to?: string;
-}) {
-  const env = getEnv();
-  const settings = await getSystemSettings();
-  const to = options.to || settings.notificationEmail;
-  if (!to || !env.RESEND_FROM_EMAIL) {
-    return { sent: false, skipped: true };
-  }
-
-  const client = getClient();
-  if (!client) {
-    await prisma.notificationLog.create({
-      data: {
-        event: options.event,
-        status: "FAILED",
-        toEmail: to,
-        subject: options.subject,
-        errorCode: "RESEND_FAILED",
-        errorMessage: "RESEND_API_KEY is not configured",
-        resourceType: options.resourceType,
-        resourceId: options.resourceId,
-      },
-    });
-    return { sent: false, skipped: false };
-  }
-
+}): Promise<EmailSendResult> {
   try {
+    const env = getEnv();
+    const settings = await getSystemSettings();
+    const to = options.to || settings.notificationEmail;
+    const logBase = {
+      event: options.event,
+      subject: options.subject,
+      resourceType: options.resourceType,
+      resourceId: options.resourceId,
+    };
+
+    async function finish(reason: EmailSendReason) {
+      const result = emailSendResult(reason);
+      await recordAttempt({ ...logBase, toEmail: to || "unspecified", result });
+      return result;
+    }
+
+    if (!to) {
+      return finish(EmailSendReasons.MISSING_RECIPIENT);
+    }
+    if (!env.RESEND_API_KEY) {
+      return finish(EmailSendReasons.MISSING_API_KEY);
+    }
+    if (!env.RESEND_FROM_EMAIL) {
+      return finish(EmailSendReasons.MISSING_FROM_EMAIL);
+    }
+
+    const client = getClient();
+    if (!client) {
+      return finish(EmailSendReasons.MISSING_API_KEY);
+    }
+
     const result = await client.emails.send({
       from: env.RESEND_FROM_EMAIL,
       to,
@@ -54,34 +109,27 @@ async function sendMail(options: {
       html: options.html,
     });
     if (result.error) {
-      throw new Error(result.error.message);
+      logger.warn(
+        { event: options.event, providerName: result.error.name },
+        "Notification email rejected by provider",
+      );
+      return finish(EmailSendReasons.PROVIDER_REJECTED);
     }
-    await prisma.notificationLog.create({
-      data: {
-        event: options.event,
-        status: "SENT",
-        toEmail: to,
-        subject: options.subject,
-        resourceType: options.resourceType,
-        resourceId: options.resourceId,
-      },
-    });
-    return { sent: true, skipped: false };
+
+    return finish(EmailSendReasons.SENT);
   } catch (error) {
     logger.warn({ err: error, event: options.event }, "Notification email failed");
-    await prisma.notificationLog.create({
-      data: {
-        event: options.event,
-        status: "FAILED",
-        toEmail: to,
-        subject: options.subject,
-        errorCode: "RESEND_FAILED",
-        errorMessage: "Failed to send email",
-        resourceType: options.resourceType,
-        resourceId: options.resourceId,
-      },
+    const fallback = emailSendResult(EmailSendReasons.PROVIDER_REJECTED);
+    const to = options.to || "unspecified";
+    await recordAttempt({
+      event: options.event,
+      subject: options.subject,
+      resourceType: options.resourceType,
+      resourceId: options.resourceId,
+      toEmail: to,
+      result: fallback,
     });
-    return { sent: false, skipped: false };
+    return fallback;
   }
 }
 
@@ -179,7 +227,7 @@ export async function notifyDiskWarning(usedPercent: number) {
   });
 }
 
-export async function sendTestEmail(to?: string) {
+export async function sendTestEmail(to: string) {
   return sendMail({
     event: "TEST",
     subject: "رسالة اختبار — WEPS Backup Center",

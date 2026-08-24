@@ -36,3 +36,7 @@ export function resetRateLimit(key?: string) {
 export function loginRateLimitKey(ip: string, email: string) {
   return `login:${ip}:${email.trim().toLowerCase()}`;
 }
+
+export function testEmailRateLimitKey(userId: string) {
+  return `test-email:${userId}`;
+}
