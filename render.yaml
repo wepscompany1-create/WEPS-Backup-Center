@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+
+databases:
+  - name: weps-backup-center-db
+    plan: basic-256mb
+    region: oregon
+    databaseName: weps_backup_center
+    user: weps_backup
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: weps-backup-center
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    numInstances: 1
+    autoDeployTrigger: commit
+    disk:
+      name: weps-backup-data
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_TIMEZONE
+        value: Asia/Aden
+      - key: BACKUP_DIR
+        value: /var/data/backups
+      - key: BACKUP_RETENTION_COUNT
+        value: "7"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: weps-backup-center-db
+          property: connectionString
+      - key: APP_URL
+        sync: false
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: SOURCE_DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: BACKUP_ENCRYPTION_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false

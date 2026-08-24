@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BackupType {
+  MANUAL
+  SCHEDULED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  INTERRUPTED
+}
+
+enum IntegrityStatus {
+  NOT_CHECKED
+  VALID
+  INVALID
+}
+
+enum BackupProgressStage {
+  PREPARING
+  DUMPING
+  VALIDATING
+  ENCRYPTING
+  SAVING
+  FINALIZING
+}
+
+enum RestoreProgressStage {
+  PREPARING
+  DECRYPTING
+  VERIFYING
+  CREATING_DATABASE
+  RESTORING
+  VALIDATING
+  CLEANING_UP
+  COMPLETED
+}
+
+enum AuditResult {
+  SUCCESS
+  FAILURE
+  WARNING
+}
+
+enum NotificationEvent {
+  BACKUP_SUCCESS
+  BACKUP_FAILURE
+  RESTORE_SUCCESS
+  RESTORE_FAILURE
+  INTEGRITY_FAILURE
+  DISK_WARNING
+  TEST
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model AdminUser {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  passwordHash        String
+  isActive            Boolean   @default(true)
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  backups      Backup[]
+  restoreTests RestoreTest[]
+  auditLogs    AuditLog[]
+}
+
+model Backup {
+  id                    String               @id @default(cuid())
+  backupNumber          Int                  @unique
+  type                  BackupType
+  status                JobStatus
+  progressStage         BackupProgressStage?
+  integrityStatus       IntegrityStatus      @default(NOT_CHECKED)
+  fileName              String?
+  storagePath           String?
+  originalDumpSizeBytes BigInt?
+  encryptedSizeBytes    BigInt?
+  sha256                String?
+  encryptionIv          String?
+  encryptionAuthTag     String?
+  pgDumpVersion         String?
+  postgresServerVersion String?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  durationMs            Int?
+  errorCode             String?
+  errorMessage          String?
+  errorReferenceId      String?
+  deletedAt             DateTime?
+  initiatedById         String?
+  initiatedBy           AdminUser?           @relation(fields: [initiatedById], references: [id])
+  restoreTests          RestoreTest[]
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([deletedAt])
+}
+
+model RestoreTest {
+  id                  String                @id @default(cuid())
+  backupId            String
+  backup              Backup                @relation(fields: [backupId], references: [id])
+  status              JobStatus
+  progressStage       RestoreProgressStage?
+  tempDatabaseName    String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  durationMs          Int?
+  integrityVerified   Boolean               @default(false)
+  databaseCreated     Boolean               @default(false)
+  restoreCompleted    Boolean               @default(false)
+  validationCompleted Boolean               @default(false)
+  tempDatabaseDropped Boolean               @default(false)
+  tableCount          Int?
+  validationSummary   String?
+  errorCode           String?
+  errorMessage        String?
+  errorReferenceId    String?
+  initiatedById       String?
+  initiatedBy         AdminUser?            @relation(fields: [initiatedById], references: [id])
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([tempDatabaseName])
+}
+
+model AuditLog {
+  id           String      @id @default(cuid())
+  actorId      String?
+  actor        AdminUser?  @relation(fields: [actorId], references: [id])
+  action       String
+  resourceType String?
+  resourceId   String?
+  result       AuditResult
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json?
+  createdAt    DateTime    @default(now())
+
+  @@index([action])
+  @@index([result])
+  @@index([createdAt])
+}
+
+model SystemSettings {
+  id                       String    @id
+  scheduleEnabled          Boolean   @default(true)
+  backupIntervalDays       Int       @default(2)
+  backupLocalTime          String    @default("03:00")
+  timezone                 String    @default("Asia/Aden")
+  nextScheduledBackupAt    DateTime?
+  notificationEmail        String?
+  notifyOnBackupSuccess    Boolean   @default(true)
+  notifyOnBackupFailure    Boolean   @default(true)
+  notifyOnRestoreSuccess   Boolean   @default(true)
+  notifyOnRestoreFailure   Boolean   @default(true)
+  notifyOnIntegrityFailure Boolean   @default(true)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+}
+
+model NotificationLog {
+  id           String             @id @default(cuid())
+  event        NotificationEvent
+  status       NotificationStatus
+  toEmail      String
+  subject      String
+  errorCode    String?
+  errorMessage String?
+  resourceType String?
+  resourceId   String?
+  createdAt    DateTime           @default(now())
+
+  @@index([createdAt])
+  @@index([event])
+}
+
+model JobLock {
+  name       String    @id
+  holder     String?
+  acquiredAt DateTime?
+}
