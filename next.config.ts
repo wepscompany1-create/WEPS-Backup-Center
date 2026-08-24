@@ -5,6 +5,12 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   allowedDevOrigins: ["127.0.0.1"],
+  outputFileTracingIncludes: {
+    "/*": [
+      "./node_modules/.prisma/client/**",
+      "./node_modules/@prisma/client/**",
+    ],
+  },
   serverExternalPackages: [
     "@node-rs/argon2",
     "pino",
