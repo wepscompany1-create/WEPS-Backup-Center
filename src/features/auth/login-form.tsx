@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { safeInternalPath } from "@/lib/security/redirect";
 
 export function LoginForm() {
   const router = useRouter();
@@ -21,18 +22,23 @@ export function LoginForm() {
     event.preventDefault();
     setPending(true);
     setError(null);
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
-    setPending(false);
-    if (result?.error) {
-      setError("البريد الإلكتروني أو كلمة المرور غير صحيحة، أو الحساب مقفل مؤقتاً.");
-      return;
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+      if (result?.error) {
+        setError("البريد الإلكتروني أو كلمة المرور غير صحيحة، أو الحساب مقفل مؤقتاً.");
+        return;
+      }
+      router.push(safeInternalPath(searchParams.get("callbackUrl")));
+      router.refresh();
+    } catch {
+      setError("تعذر الاتصال بالخادم. حاول مرة أخرى.");
+    } finally {
+      setPending(false);
     }
-    router.push(searchParams.get("callbackUrl") || searchParams.get("callbackUrl") || "/");
-    router.refresh();
   }
 
   return (

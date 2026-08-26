@@ -23,7 +23,20 @@ export function getConfigurationIssues() {
     });
   } else {
     try {
-      parsePostgresUrl(env.SOURCE_DATABASE_URL);
+      const source = parsePostgresUrl(env.SOURCE_DATABASE_URL);
+      const host = source.host.toLowerCase();
+      const isLoopback =
+        host === "localhost" ||
+        host === "::1" ||
+        host === "0.0.0.0" ||
+        host.startsWith("127.");
+      if (env.isProduction && isLoopback) {
+        issues.push({
+          code: "SOURCE_DATABASE_URL_LOOPBACK",
+          message: "قاعدة المصدر تشير إلى localhost، وهو غير متاح من خدمة Render. استخدم رابط PostgreSQL خارجي أو خاص قابل للوصول.",
+          blocksBackup: true,
+        });
+      }
     } catch {
       issues.push({
         code: "SOURCE_DATABASE_URL_INVALID",

@@ -11,9 +11,10 @@ const optionalUrl = z
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().optional(),
-  APP_URL: z.string().trim().min(1).optional(),
+  APP_URL: optionalUrl,
   AUTH_SECRET: z.string().min(32).optional(),
-  AUTH_URL: z.string().trim().optional(),
+  AUTH_URL: optionalUrl,
+  NEXTAUTH_URL: optionalUrl,
   DATABASE_URL: z.string().min(1).optional(),
   SOURCE_DATABASE_URL: z.string().min(1).optional(),
   ADMIN_EMAIL: z.string().email().optional(),
@@ -47,6 +48,34 @@ function defaultBackupDir(isProduction: boolean) {
   return "/var/data/backups";
 }
 
+function normalizeAppOrigin(value: string, isProduction: boolean) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("APP_URL must be a valid absolute URL");
+  }
+
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("APP_URL must be an HTTP(S) origin without credentials");
+  }
+  if (url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("APP_URL must contain only the public origin (no path, query, or hash)");
+  }
+
+  const hostname = url.hostname.toLowerCase();
+  const isLoopback =
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "0.0.0.0" ||
+    hostname.startsWith("127.");
+  if (isProduction && (url.protocol !== "https:" || isLoopback)) {
+    throw new Error("APP_URL must use a public HTTPS origin in production");
+  }
+
+  return url.origin;
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   if (source === process.env) {
     hydrateProcessEnvFromFiles();
@@ -59,13 +88,29 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   if (isProduction && !parsed.AUTH_SECRET && !isBuildTime) {
     throw new Error("AUTH_SECRET is required in production (min 32 characters)");
   }
-  const appUrl =
-    parsed.APP_URL ||
-    parsed.AUTH_URL ||
-    (isProduction ? "" : "http://localhost:3000");
+  const configuredAppUrl = parsed.APP_URL || parsed.AUTH_URL || parsed.NEXTAUTH_URL;
+  if (isProduction && !configuredAppUrl && !isBuildTime) {
+    throw new Error("APP_URL is required in production");
+  }
+  const appUrl = configuredAppUrl
+    ? normalizeAppOrigin(configuredAppUrl, isProduction && !isBuildTime)
+    : isProduction
+      ? ""
+      : "http://localhost:3000";
+
+  if (source === process.env && appUrl) {
+    // APP_URL is the canonical source of truth. Auth.js reads the aliases
+    // directly and otherwise may rewrite production requests to a stale host.
+    process.env.APP_URL = appUrl;
+    process.env.AUTH_URL = appUrl;
+    process.env.NEXTAUTH_URL = appUrl;
+  }
 
   return {
     ...parsed,
+    APP_URL: appUrl || parsed.APP_URL,
+    AUTH_URL: appUrl || parsed.AUTH_URL,
+    NEXTAUTH_URL: appUrl || parsed.NEXTAUTH_URL,
     BACKUP_DIR: parsed.BACKUP_DIR || defaultBackupDir(isProduction),
     isProduction,
     appUrl,

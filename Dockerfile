@@ -24,6 +24,7 @@ RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
+ARG PG_MAJOR=18
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PRISMA_CLI_BINARY_TARGETS=debian-openssl-3.0.x
@@ -31,7 +32,15 @@ ENV PORT=10000
 ENV HOSTNAME=0.0.0.0
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends postgresql-client openssl ca-certificates \
+  && apt-get install -y --no-install-recommends ca-certificates curl openssl \
+  && install -d /usr/share/postgresql-common/pgdg \
+  && curl --fail --show-error --silent \
+    -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends "postgresql-client-${PG_MAJOR}" \
   && rm -rf /var/lib/apt/lists/* \
   && pg_dump --version \
   && pg_restore --version \

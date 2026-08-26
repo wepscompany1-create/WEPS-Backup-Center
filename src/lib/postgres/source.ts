@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getEnv } from "@/lib/config/env";
+import { sanitizeErrorMessage } from "@/lib/errors";
+import { logger } from "@/lib/logger";
 import { postgresCommandRunner } from "@/lib/postgres/command-runner";
 import { parsePostgresUrl, toPgEnv } from "@/lib/postgres/url";
 
@@ -33,6 +35,7 @@ export async function getSourceHealth(): Promise<SourceHealth> {
   const clientVersion = clientVersions?.pg_dump ?? null;
 
   if (!env.SOURCE_DATABASE_URL) {
+    logger.warn("Source database health check skipped: SOURCE_DATABASE_URL is not configured");
     return {
       connected: false,
       latencyMs: null,
@@ -53,6 +56,14 @@ export async function getSourceHealth(): Promise<SourceHealth> {
     });
     const latencyMs = Date.now() - started;
     if (result.code !== 0) {
+      logger.warn(
+        {
+          code: result.code,
+          latencyMs,
+          detail: result.stderr.trim().slice(0, 500) || undefined,
+        },
+        "Source database health check failed",
+      );
       return {
         connected: false,
         latencyMs,
@@ -73,7 +84,14 @@ export async function getSourceHealth(): Promise<SourceHealth> {
       clientVersion,
       incompatible,
     };
-  } catch {
+  } catch (error) {
+    logger.warn(
+      {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+        detail: sanitizeErrorMessage(error instanceof Error ? error.message : String(error)).slice(0, 500),
+      },
+      "Source database health check could not run",
+    );
     return {
       connected: false,
       latencyMs: null,

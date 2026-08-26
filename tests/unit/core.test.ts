@@ -21,6 +21,11 @@ import { selectBackupsToDelete } from "@/features/backup/retention";
 import { sanitizeErrorMessage } from "@/lib/errors";
 import { resolveBackupPath } from "@/lib/storage/paths";
 import { loadEnv, resetEnvCache } from "@/lib/config/env";
+import {
+  createPublicUrl,
+  resolveAuthRedirect,
+  safeInternalPath,
+} from "@/lib/security/redirect";
 
 describe("encryption key parsing", () => {
   it("accepts 32-byte hex and base64", () => {
@@ -169,6 +174,53 @@ describe("env production guards", () => {
         DATABASE_URL: "postgres://u:p@localhost:5432/app",
       }),
     ).toThrow(/AUTH_SECRET/);
+  });
+
+  it("normalizes the production public origin", () => {
+    const env = loadEnv({
+      NODE_ENV: "production",
+      AUTH_SECRET: "a".repeat(32),
+      APP_URL: "https://weps-backup-center.onrender.com/",
+      AUTH_URL: "http://localhost:3000",
+      NEXTAUTH_URL: "http://localhost:3000",
+    });
+    expect(env.appUrl).toBe("https://weps-backup-center.onrender.com");
+    expect(env.AUTH_URL).toBe(env.appUrl);
+    expect(env.NEXTAUTH_URL).toBe(env.appUrl);
+  });
+
+  it("rejects localhost and insecure origins in production", () => {
+    const base = {
+      NODE_ENV: "production" as const,
+      AUTH_SECRET: "a".repeat(32),
+    };
+    expect(() => loadEnv({ ...base, APP_URL: "http://localhost:3000" })).toThrow(/public HTTPS/);
+    expect(() => loadEnv({ ...base, APP_URL: "http://weps.example.com" })).toThrow(/public HTTPS/);
+  });
+});
+
+describe("safe authentication redirects", () => {
+  const productionOrigin = "https://weps-backup-center.onrender.com";
+
+  it("uses the configured production origin over an internal localhost request", () => {
+    expect(
+      createPublicUrl("/login?callbackUrl=%2F", productionOrigin, "http://localhost:3000").toString(),
+    ).toBe(`${productionOrigin}/login?callbackUrl=%2F`);
+  });
+
+  it("accepts internal callback paths and rejects external redirects", () => {
+    expect(safeInternalPath("/backups?page=2")).toBe("/backups?page=2");
+    expect(safeInternalPath("//evil.example/login")).toBe("/");
+    expect(safeInternalPath("https://evil.example/login")).toBe("/");
+  });
+
+  it("keeps Auth.js redirects on the canonical origin", () => {
+    expect(resolveAuthRedirect("/backups", "http://localhost:3000", productionOrigin)).toBe(
+      `${productionOrigin}/backups`,
+    );
+    expect(resolveAuthRedirect("http://localhost:3000/login", "http://localhost:3000", productionOrigin)).toBe(
+      `${productionOrigin}/`,
+    );
   });
 });
 

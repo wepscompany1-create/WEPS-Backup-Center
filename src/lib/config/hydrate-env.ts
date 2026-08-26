@@ -39,13 +39,7 @@ export function hydrateProcessEnvFromFiles() {
   if (!process.env.AUTH_URL && process.env.APP_URL) {
     process.env.AUTH_URL = process.env.APP_URL;
   }
-
-  copyEnvAlias("AUTH_SECRET", "AUTH_SECRET");
-  copyEnvAlias("AUTH_SECRET", "AUTH_SECRET");
-}
-
-function copyEnvAlias(from: string, to: string) {
-  if (!process.env[to] && process.env[from]) {
-    process.env[to] = process.env[from];
+  if (!process.env.NEXTAUTH_URL && process.env.APP_URL) {
+    process.env.NEXTAUTH_URL = process.env.APP_URL;
   }
 }

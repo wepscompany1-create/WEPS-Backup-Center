@@ -2,6 +2,7 @@ import type { NextAuthConfig } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import type { Session, User } from "next-auth";
 import { getEnv } from "@/lib/config/env";
+import { resolveAuthRedirect } from "@/lib/security/redirect";
 
 export const authConfig = {
   trustHost: true,
@@ -26,6 +27,9 @@ export const authConfig = {
     },
   },
   callbacks: {
+    async redirect({ url, baseUrl }) {
+      return resolveAuthRedirect(url, baseUrl, getEnv().appUrl);
+    },
     async jwt({ token, user }: { token: JWT; user?: User }) {
       const env = getEnv();
       const now = Date.now();

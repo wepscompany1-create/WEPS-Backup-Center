@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { DatabaseBackup } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -45,21 +46,35 @@ function formatWhen(value: string | null, timezone: string) {
   }).format(new Date(value));
 }
 
+function loginPath() {
+  const callbackUrl = `${window.location.pathname}${window.location.search}`;
+  return `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+}
+
 export function DashboardView() {
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
-    const response = await fetch("/api/dashboard");
-    if (!response.ok) {
-      setError("تعذر تحميل لوحة المعلومات.");
-      return;
+    try {
+      const response = await fetch("/api/dashboard");
+      if (response.status === 401) {
+        router.push(loginPath());
+        return;
+      }
+      if (!response.ok) {
+        setError("تعذر تحميل لوحة المعلومات.");
+        return;
+      }
+      setData(await response.json());
+      setError(null);
+    } catch {
+      setError("تعذر الاتصال بالخادم.");
     }
-    setData(await response.json());
-    setError(null);
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     void load();
@@ -77,15 +92,28 @@ export function DashboardView() {
   }, [data]);
 
   async function startBackup() {
-    const response = await fetch("/api/backups", { method: "POST" });
-    const json = await response.json();
-    if (!response.ok) {
-      toast.error(json.message || "تعذر بدء النسخ الاحتياطي");
-      return;
+    try {
+      const response = await fetch("/api/backups", { method: "POST" });
+      const json = (await response.json().catch(() => ({}))) as {
+        jobId?: string;
+        code?: string;
+        message?: string;
+      };
+      if (response.status === 401 || json.code === "UNAUTHORIZED") {
+        toast.error("انتهت الجلسة. سيتم تحويلك إلى تسجيل الدخول.");
+        router.push(loginPath());
+        return;
+      }
+      if (!response.ok || !json.jobId) {
+        toast.error(json.message || "تعذر بدء النسخ الاحتياطي");
+        return;
+      }
+      setJobId(json.jobId);
+      toast.success("بدأت عملية النسخ الاحتياطي");
+      void load();
+    } catch {
+      toast.error("تعذر الاتصال بالخادم.");
     }
-    setJobId(json.jobId);
-    toast.success("بدأت عملية النسخ الاحتياطي");
-    void load();
   }
 
   if (!data && !error) {
