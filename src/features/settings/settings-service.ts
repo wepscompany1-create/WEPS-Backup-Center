@@ -23,7 +23,17 @@ export const settingsUpdateSchema = z.object({
   notifyOnRestoreSuccess: z.boolean().optional(),
   notifyOnRestoreFailure: z.boolean().optional(),
   notifyOnIntegrityFailure: z.boolean().optional(),
-});
+  productionRestoreMaintenanceEnabled: z.boolean().optional(),
+  productionRestoreMaintenanceStart: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "صيغة الوقت يجب أن تكون HH:mm")
+    .optional(),
+  productionRestoreMaintenanceEnd: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "صيغة الوقت يجب أن تكون HH:mm")
+    .optional(),
+  productionRestoreRollbackRetentionHours: z.number().int().min(1).max(720).optional(),
+}).strict();
 
 export async function updateSettings(input: z.infer<typeof settingsUpdateSchema>, actorId?: string) {
   const current = await getSystemSettings();
@@ -58,6 +68,18 @@ export async function updateSettings(input: z.infer<typeof settingsUpdateSchema>
       notifyOnRestoreSuccess: input.notifyOnRestoreSuccess ?? current.notifyOnRestoreSuccess,
       notifyOnRestoreFailure: input.notifyOnRestoreFailure ?? current.notifyOnRestoreFailure,
       notifyOnIntegrityFailure: input.notifyOnIntegrityFailure ?? current.notifyOnIntegrityFailure,
+      productionRestoreMaintenanceEnabled:
+        input.productionRestoreMaintenanceEnabled ??
+        current.productionRestoreMaintenanceEnabled,
+      productionRestoreMaintenanceStart:
+        input.productionRestoreMaintenanceStart ??
+        current.productionRestoreMaintenanceStart,
+      productionRestoreMaintenanceEnd:
+        input.productionRestoreMaintenanceEnd ??
+        current.productionRestoreMaintenanceEnd,
+      productionRestoreRollbackRetentionHours:
+        input.productionRestoreRollbackRetentionHours ??
+        current.productionRestoreRollbackRetentionHours,
       nextScheduledBackupAt,
     },
   });

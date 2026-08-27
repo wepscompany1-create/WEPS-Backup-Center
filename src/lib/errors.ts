@@ -33,6 +33,19 @@ export const ErrorCodes = {
   LOGIN_LOCKED: "LOGIN_LOCKED",
   LOGIN_FAILED: "LOGIN_FAILED",
   RATE_LIMITED: "RATE_LIMITED",
+  PRODUCTION_RESTORE_IN_PROGRESS: "PRODUCTION_RESTORE_IN_PROGRESS",
+  PRODUCTION_RESTORE_NOT_ELIGIBLE: "PRODUCTION_RESTORE_NOT_ELIGIBLE",
+  PRODUCTION_RESTORE_NOT_FOUND: "PRODUCTION_RESTORE_NOT_FOUND",
+  RESTORE_TEST_REQUIRED: "RESTORE_TEST_REQUIRED",
+  REAUTH_FAILED: "REAUTH_FAILED",
+  SAME_ORIGIN_REQUIRED: "SAME_ORIGIN_REQUIRED",
+  OUTSIDE_MAINTENANCE_WINDOW: "OUTSIDE_MAINTENANCE_WINDOW",
+  CUTOVER_PERMISSION_DENIED: "CUTOVER_PERMISSION_DENIED",
+  CUTOVER_ACTIVE_CONNECTIONS: "CUTOVER_ACTIVE_CONNECTIONS",
+  CUTOVER_PARTIAL_FAILURE: "CUTOVER_PARTIAL_FAILURE",
+  PREVIOUS_RETENTION_ACTIVE: "PREVIOUS_RETENTION_ACTIVE",
+  INVALID_RESTORE_STATE: "INVALID_RESTORE_STATE",
+  CANDIDATE_CLEANUP_FAILED: "CANDIDATE_CLEANUP_FAILED",
   INTERNAL_ERROR: "INTERNAL_ERROR",
 } as const;
 
@@ -71,6 +84,19 @@ const arabicMessages: Record<ErrorCode, string> = {
   LOGIN_LOCKED: "تم قفل الحساب مؤقتاً بعد محاولات دخول فاشلة.",
   LOGIN_FAILED: "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
   RATE_LIMITED: "تجاوزت حد الطلبات. حاول لاحقاً.",
+  PRODUCTION_RESTORE_IN_PROGRESS: "توجد عملية استعادة إنتاج تستخدم الموارد الآن.",
+  PRODUCTION_RESTORE_NOT_ELIGIBLE: "هذه النسخة غير مؤهلة لاستعادة الإنتاج.",
+  PRODUCTION_RESTORE_NOT_FOUND: "عملية استعادة الإنتاج غير موجودة.",
+  RESTORE_TEST_REQUIRED: "يلزم اختبار استعادة ناجح لنفس النسخة قبل استعادة الإنتاج.",
+  REAUTH_FAILED: "كلمة المرور الحالية غير صحيحة أو الحساب غير نشط.",
+  SAME_ORIGIN_REQUIRED: "رُفض الطلب لأنه لم يصدر من واجهة النظام الموثوقة.",
+  OUTSIDE_MAINTENANCE_WINDOW: "استعادة الإنتاج متاحة فقط داخل نافذة الصيانة المحددة.",
+  CUTOVER_PERMISSION_DENIED: "لا يملك مستخدم PostgreSQL صلاحية إعادة تسمية قواعد البيانات.",
+  CUTOVER_ACTIVE_CONNECTIONS: "لا يمكن التبديل مع وجود اتصالات مفتوحة بقاعدة الإنتاج. أوقف التطبيق المصدر أولاً.",
+  CUTOVER_PARTIAL_FAILURE: "فشل التبديل بعد إعادة تسمية جزئية. اتبع دليل التعافي فوراً.",
+  PREVIOUS_RETENTION_ACTIVE: "لا يمكن حذف قاعدة التراجع قبل انتهاء مدة الاحتفاظ.",
+  INVALID_RESTORE_STATE: "لا تسمح الحالة الحالية بتنفيذ هذا الإجراء.",
+  CANDIDATE_CLEANUP_FAILED: "تعذر تنظيف قاعدة الاستعادة المرشحة. يلزم تدخل يدوي.",
   INTERNAL_ERROR: "حدث خطأ غير متوقع. راجع رقم المرجع مع المسؤول.",
 };
 
@@ -149,13 +175,24 @@ function defaultStatus(code: ErrorCode) {
     case ErrorCodes.VALIDATION_ERROR:
     case ErrorCodes.PATH_TRAVERSAL:
     case ErrorCodes.UNSAFE_DATABASE_NAME:
+    case ErrorCodes.SAME_ORIGIN_REQUIRED:
       return 400;
     case ErrorCodes.BACKUP_NOT_FOUND:
+    case ErrorCodes.PRODUCTION_RESTORE_NOT_FOUND:
       return 404;
     case ErrorCodes.BACKUP_IN_PROGRESS:
     case ErrorCodes.RESTORE_IN_PROGRESS:
     case ErrorCodes.JOB_CONFLICT:
+    case ErrorCodes.PRODUCTION_RESTORE_IN_PROGRESS:
+    case ErrorCodes.RESTORE_TEST_REQUIRED:
+    case ErrorCodes.OUTSIDE_MAINTENANCE_WINDOW:
+    case ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS:
+    case ErrorCodes.PREVIOUS_RETENTION_ACTIVE:
+    case ErrorCodes.INVALID_RESTORE_STATE:
       return 409;
+    case ErrorCodes.PRODUCTION_RESTORE_NOT_ELIGIBLE:
+    case ErrorCodes.REAUTH_FAILED:
+      return 422;
     case ErrorCodes.CONFIGURATION_ERROR:
     case ErrorCodes.ENCRYPTION_KEY_INVALID:
     case ErrorCodes.SOURCE_EQUALS_APP_DB:

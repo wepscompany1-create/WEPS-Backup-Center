@@ -17,6 +17,7 @@ Persistent disks force a **single instance** and disable zero-downtime deploys.
 3. Apply the Blueprint.
 4. Fill secrets marked `sync: false`:
    - `SOURCE_DATABASE_URL` — Internal URL of the source PostgreSQL, never `localhost`
+   - `SOURCE_MAINTENANCE_DATABASE` — non-production database on the same instance, normally `postgres`
    - `ADMIN_EMAIL`
    - `ADMIN_PASSWORD` (min 12 characters; not a placeholder)
    - `BACKUP_ENCRYPTION_KEY` — generate locally with `npm run keygen` and paste the **hex** value (64 characters). No quotes, spaces, or `hex:` prefix.
@@ -31,6 +32,10 @@ Persistent disks force a **single instance** and disable zero-downtime deploys.
 `DATABASE_URL` is wired from the Blueprint database. Use the **internal** connection string on Render.
 
 Source PostgreSQL is a different instance. Grant the backup role permission to `pg_dump` and `CREATE DATABASE` for restore tests.
+
+Production Restore also requires the source role to connect to `SOURCE_MAINTENANCE_DATABASE`, create candidate databases, and rename databases it owns. Do not grant superuser solely for this feature. Backup Center never terminates live-production sessions and never drops the live source database.
+
+Maintenance window and rollback-retention values are stored in `SystemSettings` and edited in the application Settings page; they are not Render environment variables. Retention controls only when manual deletion of a registered `prod_previous_*` becomes available. No Render cron job should delete previous databases.
 
 If `pg_dump` is older than the source server major version, rebuild the Docker image with a newer `postgresql-client`.
 
@@ -75,6 +80,32 @@ If the dashboard reports that the source database is disconnected:
    private network. Otherwise use the provider's external TLS URL and allow Render egress.
 4. Confirm the backup user can connect and run `SHOW server_version`.
 5. Confirm the installed `pg_dump` major version is not older than the source server.
+
+## Production Restore on Render
+
+Before enabling the workflow:
+
+1. Set `SOURCE_MAINTENANCE_DATABASE=postgres` (or another provider-approved maintenance database) on the Backup Center web service and redeploy.
+2. Verify the source role can connect to it and create a disposable database.
+3. Check whether the provider permits `ALTER DATABASE ... RENAME`. Managed providers may restrict it.
+4. Configure the Production Restore maintenance window and rollback retention in Settings.
+5. Ensure the source application's service can be stopped and its connection pools drained before cutover.
+
+The first action restores only to a registered `prod_restore_*` candidate. Controlled rename cutover is a second, independently re-authenticated action. Persistent Disk stores the encrypted artifact and controlled temporary dump, but the candidate and previous databases live on the source PostgreSQL instance.
+
+### External URL-switch fallback
+
+If rename permission is unavailable or policy forbids rename:
+
+1. Leave the validated candidate in `AWAITING_EXTERNAL_CUTOVER`.
+2. Suspend the source application service and workers.
+3. In that source service's Render **Environment** tab, replace its `DATABASE_URL` with the candidate's provider connection string. Do not put this URL into Backup Center.
+4. Redeploy/restart the source service and run full smoke tests.
+5. Retain the former database according to provider policy and delete it only through a reviewed manual process.
+
+If the source application is not hosted on Render, perform the equivalent secret update in its platform. Backup Center does not call the Render API or mutate another service's environment.
+
+Render deploy/restart during an active Production Restore results in an interrupted job. Recovery never drops `prod_restore_*` or `prod_previous_*`; operators must review `INTERRUPTED`, `AWAITING_EXTERNAL_CUTOVER`, or `ROLLBACK_REQUIRED` against the runbook before retrying.
 
 ## Secret rotation
 

@@ -15,6 +15,8 @@ const map: Record<string, { label: string; className: string; icon: typeof Check
   CONNECTED: { label: "متصل", className: "bg-emerald-700/15 text-emerald-800 dark:text-emerald-300", icon: Wifi },
   OFFLINE: { label: "غير متصل", className: "bg-red-600/15 text-red-700 dark:text-red-300", icon: Unplug },
   INCOMPATIBLE: { label: "غير متوافق", className: "bg-amber-600/15 text-amber-800 dark:text-amber-300", icon: ShieldAlert },
+  AWAITING_CUTOVER: { label: "بانتظار التبديل", className: "bg-amber-600/15 text-amber-800 dark:text-amber-300", icon: ShieldAlert },
+  AWAITING_EXTERNAL_CUTOVER: { label: "تبديل خارجي مطلوب", className: "bg-amber-600/15 text-amber-800 dark:text-amber-300", icon: ShieldAlert },
 };
 
 export function StatusBadge({ value }: { value: string }) {
@@ -46,4 +48,23 @@ export const restoreStageLabel: Record<string, string> = {
   VALIDATING: "فحوصات التحقق",
   CLEANING_UP: "التنظيف",
   COMPLETED: "اكتملت",
+};
+
+export const productionRestoreStageLabel: Record<string, string> = {
+  PREPARING: "التحضير",
+  DECRYPTING: "فك التشفير",
+  VERIFYING: "التحقق من السلامة",
+  CREATING_CANDIDATE: "إنشاء القاعدة المرشحة",
+  RESTORING: "الاستعادة إلى المرشحة",
+  VALIDATING: "فحص القاعدة المرشحة",
+  AWAITING_CUTOVER: "بانتظار تأكيد التبديل",
+  CUTOVER_RENAMING_ORIGINAL: "إعادة تسمية قاعدة الإنتاج",
+  CUTOVER_RENAMING_CANDIDATE: "تفعيل القاعدة المرشحة",
+  COMPLETED: "اكتملت",
+  ROLLBACK_AVAILABLE: "التراجع متاح",
+  AWAITING_EXTERNAL_CUTOVER: "تبديل خارجي مطلوب",
+  COMPENSATING_RENAME: "تعويض إعادة التسمية",
+  ROLLBACK_REQUIRED: "تعافٍ يدوي مطلوب",
+  DROPPING_PREVIOUS: "حذف قاعدة التراجع",
+  CLEANING_FAILED: "فشل تنظيف المرشحة",
 };

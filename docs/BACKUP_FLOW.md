@@ -15,3 +15,15 @@
 Statuses: `PENDING | RUNNING | SUCCESS | FAILED | INTERRUPTED`.
 
 Stages: `PREPARING → DUMPING → VALIDATING → ENCRYPTING → SAVING → FINALIZING`.
+
+## Production Restore eligibility
+
+A successful backup is not automatically eligible for Production Restore. Before candidate creation, the production workflow independently requires:
+
+- `status = SUCCESS` and `integrityStatus = VALID`;
+- an existing encrypted file and complete SHA-256/IV/auth-tag metadata;
+- a successful Restore Test for the same backup;
+- no backup, Restore Test, or Production Restore holding the shared heavy-job lock;
+- the configured maintenance window when that setting is enabled.
+
+Retention must not delete a backup file used by an active Production Restore. Backup retention and production rollback retention are separate: `BACKUP_RETENTION_COUNT` governs encrypted files, while the database-backed production setting governs when a retained `prod_previous_*` becomes eligible for manual deletion. Neither retention policy automatically deletes a previous production database.

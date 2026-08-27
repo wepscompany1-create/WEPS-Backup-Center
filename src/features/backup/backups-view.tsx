@@ -13,6 +13,7 @@ import { formatBytes, formatDateTimeAr, shortId } from "@/lib/format";
 import { BackupDetailsDialog } from "@/features/backup/backup-details-dialog";
 import { DeleteBackupDialog } from "@/features/backup/delete-backup-dialog";
 import { RestoreTestDialog } from "@/features/restore/restore-test-dialog";
+import { ProductionRestoreDialog } from "@/features/restore/production-restore-dialog";
 
 type BackupRow = {
   id: string;
@@ -40,6 +41,7 @@ export function BackupsView() {
   const [selected, setSelected] = useState<BackupRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<BackupRow | null>(null);
   const [restoreTarget, setRestoreTarget] = useState<BackupRow | null>(null);
+  const [productionRestoreTarget, setProductionRestoreTarget] = useState<BackupRow | null>(null);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -66,11 +68,12 @@ export function BackupsView() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold">النسخ الاحتياطية</h1>
-        <p className="text-sm text-muted-foreground">عرض، تنزيل، اختبار الاستعادة، أو حذف النسخ المشفرة.</p>
+        <p className="text-sm text-muted-foreground">عرض، تنزيل، اختبار، أو استعادة النسخ المشفرة بأمان.</p>
       </div>
       <Alert>
         <AlertDescription>
-          لأسباب أمنية، استعادة قاعدة البيانات الأساسية تتم يدوياً خارج النظام بعد التحقق من النسخة.
+          اختبار الاستعادة يفحص النسخة في قاعدة مؤقتة. استعادة الإنتاج تنشئ قاعدة
+          مرشحة منفصلة، ولا تستبدل بيانات الإنتاج إلا بعد خطوة تبديل مستقلة ومؤكدة.
         </AlertDescription>
       </Alert>
       <div className="flex flex-wrap gap-2">
@@ -131,7 +134,26 @@ export function BackupsView() {
                   <TableCell className="space-x-1 space-x-reverse">
                     <Button size="sm" variant="ghost" className="cursor-pointer" onClick={() => setSelected(item)}>التفاصيل</Button>
                     <Button size="sm" variant="ghost" className="cursor-pointer" disabled={!item.fileName || Boolean(item.deletedAt)} onClick={() => window.open(`/api/backups/${item.id}/download`)}>تنزيل</Button>
-                    <Button size="sm" variant="ghost" className="cursor-pointer" disabled={item.status !== "SUCCESS" || Boolean(item.deletedAt)} onClick={() => setRestoreTarget(item)}>اختبار الاستعادة</Button>
+                    <Button size="sm" variant="ghost" className="cursor-pointer" disabled={item.status !== "SUCCESS" || item.integrityStatus !== "VALID" || Boolean(item.deletedAt)} onClick={() => setRestoreTarget(item)}>اختبار الاستعادة</Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="cursor-pointer"
+                      disabled={
+                        item.status !== "SUCCESS" ||
+                        item.integrityStatus !== "VALID" ||
+                        !item.fileName ||
+                        Boolean(item.deletedAt)
+                      }
+                      title={
+                        item.integrityStatus !== "VALID"
+                          ? "يلزم أن تكون سلامة النسخة صالحة"
+                          : "يتحقق الخادم من اختبار الاستعادة الناجح"
+                      }
+                      onClick={() => setProductionRestoreTarget(item)}
+                    >
+                      استعادة الإنتاج
+                    </Button>
                     <Button size="sm" variant="ghost" className="cursor-pointer text-destructive" disabled={item.status === "RUNNING"} onClick={() => setDeleteTarget(item)}>حذف</Button>
                   </TableCell>
                 </TableRow>
@@ -143,6 +165,11 @@ export function BackupsView() {
       <BackupDetailsDialog backup={selected} onOpenChange={() => setSelected(null)} />
       <DeleteBackupDialog backup={deleteTarget} onOpenChange={() => setDeleteTarget(null)} onDeleted={() => { toast.success("تم حذف النسخة"); void load(); }} />
       <RestoreTestDialog backup={restoreTarget} onOpenChange={() => setRestoreTarget(null)} onStarted={() => toast.success("بدأ اختبار الاستعادة")} />
+      <ProductionRestoreDialog
+        backup={productionRestoreTarget}
+        onOpenChange={() => setProductionRestoreTarget(null)}
+        onStarted={() => toast.success("بدأ إنشاء قاعدة الاستعادة المرشحة")}
+      />
     </div>
   );
 }

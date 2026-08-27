@@ -25,6 +25,10 @@ type Payload = {
     notifyOnRestoreSuccess: boolean;
     notifyOnRestoreFailure: boolean;
     notifyOnIntegrityFailure: boolean;
+    productionRestoreMaintenanceEnabled: boolean;
+    productionRestoreMaintenanceStart: string;
+    productionRestoreMaintenanceEnd: string;
+    productionRestoreRollbackRetentionHours: number;
   };
   system: {
     backupDir: string;
@@ -43,6 +47,9 @@ export function SettingsView() {
   const [time, setTime] = useState("03:00");
   const [enabled, setEnabled] = useState(true);
   const [testingEmail, setTestingEmail] = useState(false);
+  const [maintenanceStart, setMaintenanceStart] = useState("00:00");
+  const [maintenanceEnd, setMaintenanceEnd] = useState("23:59");
+  const [retentionHours, setRetentionHours] = useState("24");
 
   async function load() {
     const response = await fetch("/api/settings");
@@ -51,6 +58,9 @@ export function SettingsView() {
     setEmail(json.settings.notificationEmail || "");
     setTime(json.settings.backupLocalTime);
     setEnabled(json.settings.scheduleEnabled);
+    setMaintenanceStart(json.settings.productionRestoreMaintenanceStart);
+    setMaintenanceEnd(json.settings.productionRestoreMaintenanceEnd);
+    setRetentionHours(String(json.settings.productionRestoreRollbackRetentionHours));
   }
 
   useEffect(() => {
@@ -139,6 +149,46 @@ export function SettingsView() {
         <h1 className="text-xl font-semibold">الإعدادات</h1>
         <p className="text-sm text-muted-foreground">الجدولة والتنبيهات ومعلومات النظام للقراءة فقط.</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>استعادة الإنتاج</CardTitle>
+          <CardDescription>
+            نافذة الصيانة تتحكم في بدء الاستعادة والتبديل والحذف. لا يوجد حذف تلقائي.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Toggle
+            label="فرض نافذة الصيانة"
+            checked={data.settings.productionRestoreMaintenanceEnabled}
+            onChange={(value) => void save({ productionRestoreMaintenanceEnabled: value })}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="maintenance-start">بداية النافذة</Label>
+              <Input id="maintenance-start" type="time" value={maintenanceStart} onChange={(event) => setMaintenanceStart(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maintenance-end">نهاية النافذة</Label>
+              <Input id="maintenance-end" type="time" value={maintenanceEnd} onChange={(event) => setMaintenanceEnd(event.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="rollback-retention">مدة الاحتفاظ بقاعدة التراجع (ساعة)</Label>
+            <Input id="rollback-retention" type="number" min={1} max={720} value={retentionHours} onChange={(event) => setRetentionHours(event.target.value)} className="max-w-40" />
+          </div>
+          <Button
+            className="cursor-pointer"
+            onClick={() => void save({
+              productionRestoreMaintenanceStart: maintenanceStart,
+              productionRestoreMaintenanceEnd: maintenanceEnd,
+              productionRestoreRollbackRetentionHours: Number(retentionHours),
+            })}
+          >
+            حفظ إعدادات الاستعادة
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

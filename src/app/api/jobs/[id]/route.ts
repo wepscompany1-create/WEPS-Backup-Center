@@ -20,5 +20,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   if (restore) {
     return applySecurityHeaders(NextResponse.json({ kind: "restore", job: restore }));
   }
+  const productionRestore = await prisma.productionRestore.findUnique({ where: { id } });
+  if (productionRestore) {
+    return applySecurityHeaders(
+      NextResponse.json({ kind: "production-restore", job: productionRestore }),
+    );
+  }
   return applySecurityHeaders(NextResponse.json({ code: "NOT_FOUND" }, { status: 404 }));
 }

@@ -1,31 +1,51 @@
 import { randomBytes } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { AppError, ErrorCodes } from "@/lib/errors";
 
 const STALE_LOCK_MS = 3 * 60 * 60 * 1000;
 
-export type LockName = "backup" | "restore";
+export type LockName = "backup" | "restore" | "production_restore";
+
+const HEAVY_LOCK_NAMES: LockName[] = ["backup", "restore", "production_restore"];
 
 export async function acquireJobLock(name: LockName, holder = randomBytes(8).toString("hex")) {
   const now = new Date();
   const staleBefore = new Date(now.getTime() - STALE_LOCK_MS);
-
-  const result = await prisma.$executeRaw`
-    UPDATE "JobLock"
-    SET "holder" = ${holder}, "acquiredAt" = ${now}
-    WHERE "name" = ${name}
-      AND (
-        "holder" IS NULL
-        OR "acquiredAt" IS NULL
-        OR "acquiredAt" < ${staleBefore}
-      )
-  `;
-
-  if (result !== 1) {
-    throw new AppError({
-      code: name === "backup" ? ErrorCodes.BACKUP_IN_PROGRESS : ErrorCodes.RESTORE_IN_PROGRESS,
+  await prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ name: string; holder: string | null; acquiredAt: Date | null }>>`
+      SELECT "name", "holder", "acquiredAt"
+      FROM "JobLock"
+      WHERE "name" IN ('backup', 'restore', 'production_restore')
+      ORDER BY "name"
+      FOR UPDATE
+    `;
+    const byName = new Map(rows.map((row) => [row.name, row]));
+    if (HEAVY_LOCK_NAMES.some((lockName) => !byName.has(lockName))) {
+      throw new AppError({ code: ErrorCodes.CONFIGURATION_ERROR });
+    }
+    const conflict = rows.find(
+      (row) =>
+        row.holder &&
+        row.holder !== holder &&
+        row.acquiredAt &&
+        row.acquiredAt >= staleBefore,
+    );
+    if (conflict) {
+      throw new AppError({
+        code:
+          conflict.name === "backup"
+            ? ErrorCodes.BACKUP_IN_PROGRESS
+            : conflict.name === "production_restore"
+              ? ErrorCodes.PRODUCTION_RESTORE_IN_PROGRESS
+              : ErrorCodes.RESTORE_IN_PROGRESS,
+      });
+    }
+    await tx.jobLock.update({
+      where: { name },
+      data: { holder, acquiredAt: now },
     });
-  }
+  }, { isolationLevel: "Serializable" as Prisma.TransactionIsolationLevel });
 
   return {
     name,
@@ -47,8 +67,17 @@ export async function isLockHeld(name: LockName) {
 }
 
 export async function anyHeavyJobRunning() {
-  const [backup, restore] = await Promise.all([isLockHeld("backup"), isLockHeld("restore")]);
-  return { backup, restore, busy: backup || restore };
+  const [backup, restore, productionRestore] = await Promise.all([
+    isLockHeld("backup"),
+    isLockHeld("restore"),
+    isLockHeld("production_restore"),
+  ]);
+  return {
+    backup,
+    restore,
+    productionRestore,
+    busy: backup || restore || productionRestore,
+  };
 }
 
 const SCHEDULER_LOCK_CLASS = 872001;

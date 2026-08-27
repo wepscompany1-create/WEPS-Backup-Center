@@ -2684,3 +2684,39 @@ docs/...
 يجب أن يكون محافظًا وآمنًا ومناسبًا لبيئة Production.
 
 ابدأ الآن في إنشاء مشروع **WEPS Backup Center** كاملًا من الصفر وتنفيذ جميع المتطلبات المذكورة أعلاه.
+
+---
+
+# 98. قرار منتج لاحق — Production Restore داخل التطبيق (2026-08-27)
+
+هذا القسم **لا يمحو النص التاريخي** في الأقسام 22 و71 و72 و92 و93. كانت تلك الأقسام تصف حظر الإصدار الأول، وتبقى مرجعًا لسبب غياب المسار سابقًا. بقرار منتج لاحق معتمد، يُستبدل الحظر المطلق لمسار Production Restore بضوابط التنفيذ التالية:
+
+- Restore Test يبقى مسارًا منفصلًا وغير مدمر، ونجاحه لنفس النسخة شرط إلزامي بلا override.
+- Production Restore يدوي فقط، ولا يشغله scheduler.
+- ممنوع `pg_restore` مباشرة إلى اسم الإنتاج. الاستعادة تكون أولًا إلى `prod_restore_YYYYMMDD_<rand>` مسجلة ومتحققًا منها.
+- cutover لا يحدث ضمن الطلب الأول حتى مع `RESTORE_AND_CUTOVER`. يتطلب إجراءً بشريًا ثانيًا مستقلاً وre-auth وتأكيدًا جديدًا.
+- الاستثناء الضيق الوحيد لحظر `ALTER` على المصدر هو controlled rename داخل cutover: الإنتاج إلى `prod_previous_*` المسجلة، ثم candidate إلى الاسم الأصلي.
+- يظل `DROP DATABASE` و`pg_terminate_backend` على قاعدة الإنتاج ممنوعين دائمًا. يجب على المشغل إيقاف التطبيق المصدر وتصريف الاتصالات.
+- إذا تعذر rename بسبب الصلاحيات أو provider أو الاتصالات، تبقى candidate في `AWAITING_EXTERNAL_CUTOVER` ويُغيَّر `DATABASE_URL` للتطبيق المصدر خارجيًا.
+- إذا فشلت rename الثانية، تُحاول compensation واحدة مضبوطة لإعادة previous إلى الاسم الأصلي. فشلها ينتج `ROLLBACK_REQUIRED` وإنذارًا حرجًا، بلا DROP أو retry أعمى.
+- لا تُحذف `prod_previous_*` تلقائيًا عند انتهاء مدة الاحتفاظ أو عند startup. تصبح مؤهلة فقط لحذف يدوي مستقل مع re-auth وتأكيد جديد.
+- startup recovery لا يحذف `prod_restore_*` أو `prod_previous_*`؛ يسوي الحالات من journal ووجود القواعد.
+- تُستخدم قاعدة صيانة مثل `postgres` عبر `SOURCE_MAINTENANCE_DATABASE` لتنفيذ lifecycle، مع إعدادات نافذة الصيانة ومدة rollback في `SystemSettings`.
+
+وبذلك تُقرأ معايير القبول القديمة التالية كمعايير **للإصدار الأول التاريخي**:
+
+- «لا يوجد Production Restore endpoint» لم تعد معيار الحالة النهائية الجديدة.
+- «No Production Restore UI» لم تعد قاعدة تصميم حالية.
+- «Automated Production Restore» يبقى خارج النطاق: المسار الجديد يدوي، وcandidate/cutover إجراءان منفصلان.
+
+معايير القبول الإضافية:
+
+- [ ] لا direct overwrite لقاعدة الإنتاج.
+- [ ] Restore Test ناجح إلزامي لنفس النسخة.
+- [ ] candidate مسجلة وآمنة قبل restore.
+- [ ] cutover بتأكيد مستقل ثانٍ وre-auth.
+- [ ] لا production DROP أو terminate.
+- [ ] rename journal + compensation + recovery states.
+- [ ] external `DATABASE_URL` fallback موثق.
+- [ ] previous deletion يدوي فقط بعد retention.
+- [ ] maintenance database/env/settings موثقة.

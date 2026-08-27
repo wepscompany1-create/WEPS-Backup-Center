@@ -13,4 +13,10 @@ Manual only. Never scheduled after a backup.
 9. `DROP DATABASE` after verifying prefix, registry row, and that the name is not the source or Backup Center database.
 10. Delete plaintext temp file.
 
-There is no production restore path in this application.
+Restore Test remains non-destructive and separate from Production Restore:
+
+- It never creates `prod_restore_*` or `prod_previous_*`, never renames production, and never changes an application's `DATABASE_URL`.
+- It may drop only its registered `restore_test_*` database after all existing name and registry checks.
+- A successful completed Restore Test for the same backup is a mandatory Production Restore eligibility gate. There is no administrative override.
+- Restore Test success proves that the encrypted artifact can be decrypted, verified, restored, and queried. It does not approve cutover or replace the second cutover confirmation.
+- Restore Test and Production Restore participate in the same heavy-job exclusion policy, so neither can overlap a backup or the other restore workflow.

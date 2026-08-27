@@ -1,7 +1,7 @@
 import "server-only";
 
 import { Resend } from "resend";
-import type { Backup, RestoreTest } from "@prisma/client";
+import type { Backup, NotificationEvent, ProductionRestore, RestoreTest } from "@prisma/client";
 import { getEnv } from "@/lib/config/env";
 import { prisma } from "@/lib/db/prisma";
 import { getSystemSettings } from "@/lib/db/settings";
@@ -22,7 +22,7 @@ function getClient() {
 }
 
 async function recordAttempt(options: {
-  event: "BACKUP_SUCCESS" | "BACKUP_FAILURE" | "RESTORE_SUCCESS" | "RESTORE_FAILURE" | "INTEGRITY_FAILURE" | "DISK_WARNING" | "TEST";
+  event: NotificationEvent;
   subject: string;
   resourceType?: string;
   resourceId?: string;
@@ -63,7 +63,7 @@ async function recordAttempt(options: {
 }
 
 async function sendMail(options: {
-  event: "BACKUP_SUCCESS" | "BACKUP_FAILURE" | "RESTORE_SUCCESS" | "RESTORE_FAILURE" | "INTEGRITY_FAILURE" | "DISK_WARNING" | "TEST";
+  event: NotificationEvent;
   subject: string;
   html: string;
   resourceType?: string;
@@ -212,6 +212,36 @@ export async function notifyRestoreResult(options: { test: RestoreTest; success:
     html: layout(
       "فشل اختبار الاستعادة",
       `<p>فشل اختبار الاستعادة.</p><p>معرف الاختبار: ${options.test.id}</p><p>مرجع الخطأ: ${options.test.errorReferenceId ?? "—"}</p><p>الوقت: ${when}</p>`,
+    ),
+  });
+}
+
+export async function notifyProductionRestore(options: {
+  restore: ProductionRestore;
+  kind: "ready" | "success" | "failure" | "critical" | "previous-dropped";
+}) {
+  const subjects = {
+    ready: "قاعدة استعادة الإنتاج المرشحة جاهزة",
+    success: "اكتمل تبديل قاعدة الإنتاج",
+    failure: "فشلت استعادة الإنتاج",
+    critical: "حالة حرجة أثناء تبديل قاعدة الإنتاج",
+    "previous-dropped": "حُذفت قاعدة التراجع السابقة",
+  } as const;
+  const events = {
+    ready: "PRODUCTION_RESTORE_READY",
+    success: "PRODUCTION_RESTORE_SUCCESS",
+    failure: "PRODUCTION_RESTORE_FAILURE",
+    critical: "PRODUCTION_RESTORE_CRITICAL",
+    "previous-dropped": "PRODUCTION_PREVIOUS_DROPPED",
+  } as const satisfies Record<typeof options.kind, NotificationEvent>;
+  await sendMail({
+    event: events[options.kind],
+    subject: `${subjects[options.kind]} — WEPS Backup Center`,
+    resourceType: "ProductionRestore",
+    resourceId: options.restore.id,
+    html: layout(
+      subjects[options.kind],
+      `<p>معرف العملية: ${options.restore.id}</p><p>الحالة: ${options.restore.status}</p><p>مرجع الخطأ: ${options.restore.errorReferenceId ?? "—"}</p>`,
     ),
   });
 }

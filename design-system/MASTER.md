@@ -198,6 +198,8 @@ Dashboard density 8/10.
 - Centered, max-width 480px.
 - Destructive dialogs require typing `حذف`.
 - Restore Test dialog explains: temporary database will be created then dropped.
+- Production Restore uses a multi-step destructive dialog. It shows backup number/date/size/SHA-256/Restore Test result, defaults to candidate-only, requires acknowledgement + exact phrase + backup number + password re-auth, and clearly states that this first action cannot cut over production.
+- Cutover and previous-database deletion each use a separate dialog with fresh re-authentication and their own exact phrase. Never reuse confirmation state between actions.
 - Focus trap, Escape closes, return focus to trigger.
 
 ### Badges
@@ -305,9 +307,19 @@ Use these terms consistently:
 
 Technical terms may appear beside Arabic: Backup, Restore, PostgreSQL, SHA-256, AES-256-GCM.
 
-Production restore notice (always visible on backups/dashboard):
+Restore safety notice (always visible on backups/dashboard):
 
-> لأسباب أمنية، استعادة قاعدة البيانات الأساسية تتم يدوياً خارج النظام بعد التحقق من النسخة.
+> اختبار الاستعادة يفحص النسخة في قاعدة مؤقتة. استعادة الإنتاج تنشئ قاعدة مرشحة منفصلة، ولا تستبدل بيانات الإنتاج إلا بعد خطوة تبديل مستقلة ومؤكدة.
+
+Production Restore status copy:
+
+- قاعدة الاستعادة جاهزة للتبديل
+- يلزم تبديل رابط قاعدة البيانات خارجياً
+- التراجع متاح حتى [وقت]
+- يلزم تدخل فوري لإكمال التراجع
+- انتهت مدة الاحتفاظ؛ الحذف اليدوي متاح
+
+`ROLLBACK_REQUIRED` and `AWAITING_EXTERNAL_CUTOVER` require a persistent inline banner plus status badge; a toast alone is insufficient. Database names, hashes, IDs, and times are LTR/monospace. Do not show URLs, passwords, keys, dump paths, or raw PostgreSQL errors.
 
 ---
 
@@ -321,4 +333,7 @@ Production restore notice (always visible on backups/dashboard):
 - [ ] `prefers-reduced-motion`
 - [ ] RTL unbroken at 375 / 768 / 1024 / 1440
 - [ ] No secrets in UI
-- [ ] No Production Restore control
+- [ ] Restore Test and Production Restore controls are visually and semantically distinct
+- [ ] Production Restore defaults to candidate-only
+- [ ] Cutover is a second independent confirmation with re-auth
+- [ ] No UI action implies production DROP/terminate or automatic previous deletion

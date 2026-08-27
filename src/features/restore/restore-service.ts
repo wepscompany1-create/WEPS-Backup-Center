@@ -2,7 +2,7 @@ import "server-only";
 
 import { JobStatus, RestoreProgressStage } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { acquireJobLock, anyHeavyJobRunning } from "@/lib/db/locks";
+import { acquireJobLock } from "@/lib/db/locks";
 import { getEnv } from "@/lib/config/env";
 import { parseEncryptionKey } from "@/lib/crypto/key";
 import { decryptFileAes256Gcm } from "@/lib/crypto/aes";
@@ -29,15 +29,13 @@ export async function enqueueRestoreTest(options: {
   ipAddress?: string | null;
   userAgent?: string | null;
 }) {
-  const running = await anyHeavyJobRunning();
-  if (running.busy) {
-    throw new AppError({
-      code: running.restore ? ErrorCodes.RESTORE_IN_PROGRESS : ErrorCodes.JOB_CONFLICT,
-    });
-  }
-
   const backup = await prisma.backup.findUnique({ where: { id: options.backupId } });
-  if (!backup || backup.deletedAt || backup.status !== "SUCCESS") {
+  if (
+    !backup ||
+    backup.deletedAt ||
+    backup.status !== "SUCCESS" ||
+    backup.integrityStatus !== "VALID"
+  ) {
     throw new AppError({ code: ErrorCodes.BACKUP_NOT_FOUND });
   }
   if (!backup.fileName || !backup.sha256 || !backup.encryptionIv || !backup.encryptionAuthTag) {
@@ -53,6 +51,14 @@ export async function enqueueRestoreTest(options: {
     },
   });
 
+  let reservedLock: Awaited<ReturnType<typeof acquireJobLock>>;
+  try {
+    reservedLock = await acquireJobLock("restore", test.id);
+  } catch (error) {
+    await prisma.restoreTest.delete({ where: { id: test.id } });
+    throw error;
+  }
+
   await audit({
     actorId: options.initiatedById,
     action: AuditActions.RESTORE_TEST_STARTED,
@@ -64,11 +70,14 @@ export async function enqueueRestoreTest(options: {
     metadata: { backupId: backup.id },
   });
 
-  void runRestoreTestJob(test.id).catch(() => undefined);
+  void runRestoreTestJob(test.id, reservedLock).catch(() => undefined);
   return test;
 }
 
-export async function runRestoreTestJob(testId: string) {
+export async function runRestoreTestJob(
+  testId: string,
+  reservedLock?: Awaited<ReturnType<typeof acquireJobLock>>,
+) {
   const log = childLogger({ jobId: testId, job: "restore-test" });
   const env = getEnv();
   let tempDump: string | undefined;
@@ -78,7 +87,7 @@ export async function runRestoreTestJob(testId: string) {
   const startedAt = new Date();
 
   try {
-    lock = await acquireJobLock("restore", testId);
+    lock = reservedLock ?? (await acquireJobLock("restore", testId));
     const test = await prisma.restoreTest.update({
       where: { id: testId },
       data: {

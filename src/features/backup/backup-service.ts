@@ -3,7 +3,7 @@ import "server-only";
 import { stat } from "node:fs/promises";
 import { BackupProgressStage, BackupType, JobStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { acquireJobLock, anyHeavyJobRunning } from "@/lib/db/locks";
+import { acquireJobLock } from "@/lib/db/locks";
 import { getEnv } from "@/lib/config/env";
 import { assertBackupAllowed } from "@/lib/config/issues";
 import { assertSourceReadyForBackup } from "@/features/backup/preflight";
@@ -40,13 +40,6 @@ export async function enqueueBackup(options: {
 }) {
   assertBackupAllowed();
   assertSourceReadyForBackup(await getSourceHealth());
-  const running = await anyHeavyJobRunning();
-  if (running.busy) {
-    throw new AppError({
-      code: running.backup ? ErrorCodes.BACKUP_IN_PROGRESS : ErrorCodes.JOB_CONFLICT,
-    });
-  }
-
   const last = await prisma.backup.aggregate({ _max: { backupNumber: true } });
   const backupNumber = (last._max.backupNumber ?? 0) + 1;
   const backup = await prisma.backup.create({
@@ -59,6 +52,14 @@ export async function enqueueBackup(options: {
     },
   });
 
+  let reservedLock: Awaited<ReturnType<typeof acquireJobLock>>;
+  try {
+    reservedLock = await acquireJobLock("backup", backup.id);
+  } catch (error) {
+    await prisma.backup.delete({ where: { id: backup.id } });
+    throw error;
+  }
+
   await audit({
     actorId: options.initiatedById,
     action: options.type === "MANUAL" ? AuditActions.BACKUP_MANUAL_STARTED : AuditActions.BACKUP_SCHEDULED_STARTED,
@@ -70,11 +71,14 @@ export async function enqueueBackup(options: {
     metadata: { backupNumber },
   });
 
-  void runBackupJob(backup.id).catch(() => undefined);
+  void runBackupJob(backup.id, reservedLock).catch(() => undefined);
   return backup;
 }
 
-export async function runBackupJob(backupId: string) {
+export async function runBackupJob(
+  backupId: string,
+  reservedLock?: Awaited<ReturnType<typeof acquireJobLock>>,
+) {
   const log = childLogger({ jobId: backupId, job: "backup" });
   const env = getEnv();
   let tempDump: string | undefined;
@@ -82,7 +86,7 @@ export async function runBackupJob(backupId: string) {
   const startedAt = new Date();
 
   try {
-    lock = await acquireJobLock("backup", backupId);
+    lock = reservedLock ?? (await acquireJobLock("backup", backupId));
     await prisma.backup.update({
       where: { id: backupId },
       data: {

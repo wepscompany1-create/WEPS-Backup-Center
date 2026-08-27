@@ -32,18 +32,36 @@ export async function recoverInterruptedJobs() {
       errorMessage: "انقطعت العملية بسبب إعادة تشغيل الخدمة.",
     },
   });
+  const runningProductionRestores = await prisma.productionRestore.updateMany({
+    where: { status: { in: ["PENDING", "RUNNING"] } },
+    data: {
+      status: "INTERRUPTED",
+      completedAt: new Date(),
+      errorCode: "INTERNAL_ERROR",
+      errorMessage: "انقطعت العملية بسبب إعادة تشغيل الخدمة. لم تُحذف أي قاعدة إنتاجية.",
+    },
+  });
 
-  if (runningBackups.count > 0 || runningRestores.count > 0) {
+  if (
+    runningBackups.count > 0 ||
+    runningRestores.count > 0 ||
+    runningProductionRestores.count > 0
+  ) {
     await audit({
       action: AuditActions.JOB_INTERRUPTED,
       result: "WARNING",
       metadata: {
         backups: runningBackups.count,
         restoreTests: runningRestores.count,
+        productionRestores: runningProductionRestores.count,
       },
     });
     logger.warn(
-      { backups: runningBackups.count, restoreTests: runningRestores.count },
+      {
+        backups: runningBackups.count,
+        restoreTests: runningRestores.count,
+        productionRestores: runningProductionRestores.count,
+      },
       "Marked interrupted jobs after startup",
     );
   }
@@ -51,6 +69,7 @@ export async function recoverInterruptedJobs() {
   await prisma.jobLock.updateMany({
     data: { holder: null, acquiredAt: null },
   });
+  await reconcileInterruptedProductionRestores();
 }
 
 export async function cleanupTempFiles() {
@@ -58,7 +77,11 @@ export async function cleanupTempFiles() {
   const entries = await readdir(dir).catch(() => []);
   const now = Date.now();
   for (const name of entries) {
-    if (!name.startsWith("weps-dump-") && !name.startsWith("weps-restore-")) continue;
+    if (
+      !name.startsWith("weps-dump-") &&
+      !name.startsWith("weps-restore-") &&
+      !name.startsWith("weps-prod-restore-")
+    ) continue;
     const full = path.join(dir, name);
     try {
       const info = await stat(full);
@@ -69,6 +92,124 @@ export async function cleanupTempFiles() {
       // ignore
     }
   }
+}
+
+async function reconcileInterruptedProductionRestores() {
+  const env = getEnv();
+  if (!env.SOURCE_DATABASE_URL) return;
+  const records = await prisma.productionRestore.findMany({
+    where: { status: "INTERRUPTED" },
+    orderBy: { updatedAt: "desc" },
+    take: 50,
+  });
+  if (!records.length) return;
+  const source = parsePostgresUrl(env.SOURCE_DATABASE_URL);
+  const maintenance = {
+    ...source,
+    database: env.SOURCE_MAINTENANCE_DATABASE,
+  };
+  for (const record of records) {
+    const tracked = [
+      record.originalDatabaseName,
+      record.candidateDatabaseName,
+      record.previousDatabaseName,
+    ].filter((name): name is string => Boolean(name));
+    const listed = await postgresCommandRunner.run({
+      command: "psql",
+      args: [
+        "-Atqc",
+        `SELECT datname FROM pg_database WHERE datname IN (${tracked.map(sqlLiteral).join(",")});`,
+      ],
+      env: toPgEnv(maintenance),
+      timeoutMs: 20_000,
+    });
+    if (listed.code !== 0) continue;
+    const names = new Set(
+      listed.stdout.split("\n").map((name) => name.trim()).filter(Boolean),
+    );
+    const original = names.has(record.originalDatabaseName);
+    const candidate = names.has(record.candidateDatabaseName);
+    const previous = record.previousDatabaseName
+      ? names.has(record.previousDatabaseName)
+      : false;
+    if (original && previous && !candidate && record.previousDatabaseName) {
+      const validation = await postgresCommandRunner.run({
+        command: "psql",
+        args: ["-Atqc", "SELECT 1;"],
+        env: toPgEnv(source),
+        timeoutMs: 15_000,
+      });
+      if (validation.code !== 0 || validation.stdout.trim() !== "1") {
+        await prisma.productionRestore.update({
+          where: { id: record.id },
+          data: {
+            progressStage: "ROLLBACK_REQUIRED",
+            criticalState: "CUTOVER_STATE_VALIDATION_FAILED",
+          },
+        });
+        continue;
+      }
+      await prisma.productionRestore.update({
+        where: { id: record.id },
+        data: {
+          status: "SUCCESS",
+          progressStage: "ROLLBACK_AVAILABLE",
+          cutoverCompleted: true,
+          cutoverCompletedAt: record.cutoverCompletedAt ?? new Date(),
+          criticalState: null,
+        },
+      });
+      continue;
+    }
+    if (!original && previous && candidate && record.previousDatabaseName) {
+      const compensation = await postgresCommandRunner.run({
+        command: "psql",
+        args: [
+          "-v",
+          "ON_ERROR_STOP=1",
+          "-c",
+          `ALTER DATABASE ${quoteIdent(record.previousDatabaseName)} RENAME TO ${quoteIdent(record.originalDatabaseName)};`,
+        ],
+        env: toPgEnv(maintenance),
+        timeoutMs: 60_000,
+      });
+      await prisma.productionRestore.update({
+        where: { id: record.id },
+        data:
+          compensation.code === 0
+            ? {
+                status: "FAILED",
+                progressStage: "COMPENSATING_RENAME",
+                compensationAttemptedAt: new Date(),
+                compensationSucceededAt: new Date(),
+                criticalState: null,
+              }
+            : {
+                progressStage: "ROLLBACK_REQUIRED",
+                compensationAttemptedAt: new Date(),
+                criticalState: "STARTUP_COMPENSATION_FAILED",
+              },
+      });
+      continue;
+    }
+    await prisma.productionRestore.update({
+      where: { id: record.id },
+      data: {
+        progressStage:
+          original && candidate && !previous
+            ? record.progressStage
+            : "ROLLBACK_REQUIRED",
+        criticalState:
+          original && candidate && !previous
+            ? "INTERRUPTED_BEFORE_CUTOVER"
+            : "DATABASE_STATE_REQUIRES_REVIEW",
+      },
+    });
+  }
+}
+
+function sqlLiteral(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 export async function cleanupOrphanRestoreDatabases() {

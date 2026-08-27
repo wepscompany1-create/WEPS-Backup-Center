@@ -10,6 +10,7 @@ import {
   LogOut,
   Settings,
   ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ const items = [
   { href: "/", label: "الرئيسية", icon: LayoutDashboard },
   { href: "/backups", label: "النسخ الاحتياطية", icon: DatabaseBackup },
   { href: "/restore-tests", label: "اختبارات الاستعادة", icon: ShieldCheck },
+  { href: "/production-restores", label: "استعادة الإنتاج", icon: ShieldAlert },
   { href: "/audit", label: "سجل التدقيق", icon: ClipboardList },
   { href: "/settings", label: "الإعدادات", icon: Settings },
 ];

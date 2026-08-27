@@ -12,6 +12,10 @@ import { generateBackupFileName, sanitizeDownloadFileName } from "@/lib/crypto/f
 import {
   connectionsPointToSameDatabase,
   createTempDatabaseName,
+  createProductionCandidateName,
+  createProductionPreviousName,
+  isSafeProductionCandidateName,
+  isSafeProductionPreviousName,
   isSafeTempDatabaseName,
   parsePostgresUrl,
   replaceDatabaseName,
@@ -36,6 +40,11 @@ import {
   resolveAuthRedirect,
   safeInternalPath,
 } from "@/lib/security/redirect";
+import {
+  productionRestoreBodySchema,
+  productionRestoreCutoverSchema,
+  productionRestoreDropPreviousSchema,
+} from "@/lib/validation/api";
 
 describe("encryption key parsing", () => {
   it("accepts 32-byte hex and base64", () => {
@@ -127,6 +136,72 @@ describe("postgres url parsing", () => {
   it("validates temp database names", () => {
     expect(isSafeTempDatabaseName(createTempDatabaseName(new Date("2026-08-23T00:00:00Z")))).toBe(true);
     expect(isSafeTempDatabaseName("production")).toBe(false);
+  });
+
+  it("strictly validates generated production database names", () => {
+    const now = new Date("2026-08-23T00:00:00Z");
+    expect(isSafeProductionCandidateName(createProductionCandidateName(now))).toBe(true);
+    expect(isSafeProductionPreviousName(createProductionPreviousName(now))).toBe(true);
+    for (const unsafe of [
+      "production",
+      "prod_restore_20260823_SHORT",
+      "prod_restore_20260823_abcdef;drop",
+      "Prod_restore_20260823_abcdef",
+      "prod_previous_20260823_abcde",
+    ]) {
+      expect(isSafeProductionCandidateName(unsafe)).toBe(false);
+      expect(isSafeProductionPreviousName(unsafe)).toBe(false);
+    }
+  });
+});
+
+describe("production restore confirmation schemas", () => {
+  const initial = {
+    backupId: "backup-id",
+    confirmationPhrase: "استعادة-الإنتاج",
+    backupNumber: 42,
+    acknowledgeOverwrite: true,
+    mode: "RESTORE_ONLY",
+    currentPassword: "secret",
+  };
+
+  it("requires exact initial confirmation and rejects extra fields", () => {
+    expect(productionRestoreBodySchema.safeParse(initial).success).toBe(true);
+    expect(productionRestoreBodySchema.safeParse({ ...initial, confirmationPhrase: "استعادة الإنتاج" }).success).toBe(false);
+    expect(productionRestoreBodySchema.safeParse({ ...initial, databaseName: "production" }).success).toBe(false);
+  });
+
+  it("keeps cutover and previous deletion as separate confirmations", () => {
+    expect(productionRestoreCutoverSchema.safeParse({
+      confirmationPhrase: "تبديل-الإنتاج",
+      backupNumber: 42,
+      acknowledgeDowntime: true,
+      currentPassword: "secret",
+    }).success).toBe(true);
+    expect(productionRestoreDropPreviousSchema.safeParse({
+      confirmationPhrase: "حذف-قاعدة-التراجع",
+      backupNumber: 42,
+      acknowledgeNoRollback: true,
+      currentPassword: "secret",
+    }).success).toBe(true);
+  });
+});
+
+describe("production database safety invariants", () => {
+  it("startup recovery never drops production restore prefixes", async () => {
+    const source = await readFile(path.join(process.cwd(), "src/server/recovery.ts"), "utf8");
+    expect(source).not.toMatch(/DROP DATABASE[^`]*(prod_restore_|prod_previous_)/);
+    expect(source).not.toContain("LIKE 'prod_restore_%'");
+    expect(source).not.toContain("LIKE 'prod_previous_%'");
+  });
+
+  it("never terminates sessions on the recorded original database", async () => {
+    const source = await readFile(
+      path.join(process.cwd(), "src/features/restore/production-restore-service.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/pg_terminate_backend[^`]*originalDatabaseName/);
+    expect(source).not.toMatch(/DROP DATABASE[^`]*originalDatabaseName/);
   });
 });
 

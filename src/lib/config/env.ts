@@ -18,6 +18,7 @@ const envSchema = z.object({
   NEXTAUTH_URL: optionalUrl,
   DATABASE_URL: z.string().min(1).optional(),
   SOURCE_DATABASE_URL: z.string().min(1).optional(),
+  SOURCE_MAINTENANCE_DATABASE: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).default("postgres"),
   ADMIN_EMAIL: z.string().email().optional(),
   ADMIN_PASSWORD: z.string().min(12).optional(),
   BACKUP_ENCRYPTION_KEY: z.string().optional(),

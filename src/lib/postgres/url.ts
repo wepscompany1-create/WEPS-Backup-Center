@@ -92,6 +92,29 @@ export function createTempDatabaseName(now = new Date()) {
   return `restore_test_${y}${m}${d}_${rand}`;
 }
 
+export function isSafeProductionCandidateName(name: string) {
+  return /^prod_restore_[0-9]{8}_[a-z0-9]{6,16}$/.test(name);
+}
+
+export function isSafeProductionPreviousName(name: string) {
+  return /^prod_previous_[0-9]{8}_[a-z0-9]{6,16}$/.test(name);
+}
+
+export function createProductionCandidateName(now = new Date()) {
+  return `prod_restore_${utcDateStamp(now)}_${randomAlphaNum(8)}`;
+}
+
+export function createProductionPreviousName(now = new Date()) {
+  return `prod_previous_${utcDateStamp(now)}_${randomAlphaNum(8)}`;
+}
+
+function utcDateStamp(now: Date) {
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(now.getUTCDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
+
 function randomAlphaNum(length: number) {
   const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
   const bytes = randomBytes(length);
