@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PRODUCTION_RESTORE_PHRASE } from "@/features/restore/confirmation";
 
 export const backupsQuerySchema = z.object({
   status: z.enum(["PENDING", "RUNNING", "SUCCESS", "FAILED", "INTERRUPTED"]).optional(),
@@ -16,7 +17,7 @@ const currentPassword = z.string().min(1).max(1024);
 export const productionRestoreBodySchema = z
   .object({
     backupId: z.string().trim().min(1).max(80),
-    confirmationPhrase: z.literal("استعادة-الإنتاج"),
+    confirmationPhrase: z.literal(PRODUCTION_RESTORE_PHRASE),
     backupNumber: z.number().int().positive(),
     acknowledgeOverwrite: z.literal(true),
     mode: z.enum(["RESTORE_ONLY", "RESTORE_AND_CUTOVER"]),

@@ -284,10 +284,17 @@ function DestructiveActionDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <label className="flex items-start gap-3 text-sm">
-            <Checkbox checked={acknowledged} onCheckedChange={(value) => setAcknowledged(value === true)} />
-            <span>{action === "cutover" ? "أؤكد توقف التطبيق المصدر وعدم وجود اتصالات مفتوحة." : "أفهم أن قاعدة التراجع ستُحذف نهائياً."}</span>
-          </label>
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="destructive-acknowledge"
+              className="mt-0.5"
+              checked={acknowledged}
+              onCheckedChange={(value) => setAcknowledged(value === true)}
+            />
+            <Label htmlFor="destructive-acknowledge" className="text-sm font-normal leading-5">
+              {action === "cutover" ? "أؤكد توقف التطبيق المصدر وعدم وجود اتصالات مفتوحة." : "أفهم أن قاعدة التراجع ستُحذف نهائياً."}
+            </Label>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="destructive-phrase">اكتب {requiredPhrase}</Label>
             <Input id="destructive-phrase" value={phrase} onChange={(event) => setPhrase(event.target.value)} />
@@ -302,8 +309,8 @@ function DestructiveActionDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" className="cursor-pointer" onClick={onClose}>إلغاء</Button>
-          <Button variant="destructive" className="cursor-pointer" disabled={!valid || submitting} onClick={() => void submit()}>
+          <Button type="button" variant="outline" className="cursor-pointer" onClick={onClose}>إلغاء</Button>
+          <Button type="button" variant="destructive" className="cursor-pointer" disabled={!valid || submitting} onClick={() => void submit()}>
             {submitting ? "جارٍ التنفيذ..." : action === "cutover" ? "تنفيذ التبديل" : "حذف قاعدة التراجع"}
           </Button>
         </DialogFooter>

@@ -45,6 +45,8 @@ import {
   productionRestoreCutoverSchema,
   productionRestoreDropPreviousSchema,
 } from "@/lib/validation/api";
+import { matchesProductionRestorePhrase } from "@/features/restore/confirmation";
+import { isTrustedOrigin } from "@/lib/security/trusted-origin";
 
 describe("encryption key parsing", () => {
   it("accepts 32-byte hex and base64", () => {
@@ -164,6 +166,11 @@ describe("production restore confirmation schemas", () => {
     mode: "RESTORE_ONLY",
     currentPassword: "secret",
   };
+
+  it("accepts the hyphenated confirmation phrase and rejects a space", () => {
+    expect(matchesProductionRestorePhrase("استعادة-الإنتاج")).toBe(true);
+    expect(matchesProductionRestorePhrase("استعادة الإنتاج")).toBe(false);
+  });
 
   it("requires exact initial confirmation and rejects extra fields", () => {
     expect(productionRestoreBodySchema.safeParse(initial).success).toBe(true);
@@ -498,6 +505,31 @@ describe("safe authentication redirects", () => {
     expect(resolveAuthRedirect("http://localhost:3000/login", "http://localhost:3000", productionOrigin)).toBe(
       `${productionOrigin}/`,
     );
+  });
+});
+
+describe("same-origin CSRF check", () => {
+  const productionAppUrl = "https://weps-backup-center.onrender.com";
+
+  it("accepts localhost Origin when it matches Host even if APP_URL is production", () => {
+    expect(isTrustedOrigin("http://localhost:3000", productionAppUrl, "localhost:3000")).toBe(true);
+  });
+
+  it("accepts Origin equal to APP_URL", () => {
+    expect(
+      isTrustedOrigin(productionAppUrl, productionAppUrl, "weps-backup-center.onrender.com"),
+    ).toBe(true);
+  });
+
+  it("rejects a foreign Origin even when Host is the app", () => {
+    expect(isTrustedOrigin("https://evil.example", productionAppUrl, "localhost:3000")).toBe(false);
+    expect(
+      isTrustedOrigin("https://evil.example", productionAppUrl, "weps-backup-center.onrender.com"),
+    ).toBe(false);
+  });
+
+  it("rejects missing Origin", () => {
+    expect(isTrustedOrigin(null, productionAppUrl, "localhost:3000")).toBe(false);
   });
 });
 

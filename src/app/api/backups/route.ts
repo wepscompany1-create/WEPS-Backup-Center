@@ -60,14 +60,29 @@ export async function GET(request: Request) {
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: { initiatedBy: { select: { email: true } } },
+      include: {
+        initiatedBy: { select: { email: true } },
+        restoreTests: {
+          where: {
+            status: "SUCCESS",
+            integrityVerified: true,
+            validationCompleted: true,
+            tempDatabaseDropped: true,
+          },
+          take: 1,
+          select: { id: true },
+        },
+      },
     }),
     prisma.backup.count({ where }),
   ]);
 
   return applySecurityHeaders(
     NextResponse.json({
-      items: items.map(serializeBackup),
+      items: items.map(({ restoreTests, ...backup }) => ({
+        ...serializeBackup(backup),
+        productionRestoreEligible: restoreTests.length > 0,
+      })),
       total,
       page,
       pageSize,

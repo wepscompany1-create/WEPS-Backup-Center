@@ -30,6 +30,7 @@ type BackupRow = {
   errorReferenceId: string | null;
   deletedAt: string | null;
   initiatedBy?: { email: string } | null;
+  productionRestoreEligible?: boolean;
 };
 
 export function BackupsView() {
@@ -143,12 +144,15 @@ export function BackupsView() {
                         item.status !== "SUCCESS" ||
                         item.integrityStatus !== "VALID" ||
                         !item.fileName ||
-                        Boolean(item.deletedAt)
+                        Boolean(item.deletedAt) ||
+                        item.productionRestoreEligible === false
                       }
                       title={
                         item.integrityStatus !== "VALID"
                           ? "يلزم أن تكون سلامة النسخة صالحة"
-                          : "يتحقق الخادم من اختبار الاستعادة الناجح"
+                          : item.productionRestoreEligible === false
+                            ? "يلزم اختبار استعادة ناجح لنفس النسخة قبل استعادة الإنتاج"
+                            : "يتحقق الخادم من اختبار الاستعادة الناجح"
                       }
                       onClick={() => setProductionRestoreTarget(item)}
                     >
