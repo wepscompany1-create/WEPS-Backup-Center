@@ -3,7 +3,6 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db/prisma";
 import { applySecurityHeaders } from "@/lib/security/headers";
 import { assertSameOrigin } from "@/lib/security/same-origin";
-import { consumeRateLimit } from "@/lib/security/rate-limit";
 import { extractClientIp, truncateUserAgent } from "@/lib/security/client-ip";
 import { reauthenticateAdmin } from "@/lib/auth/reauth";
 import {
@@ -65,12 +64,6 @@ export async function POST(request: Request) {
   }
   try {
     assertSameOrigin(request);
-    const rate = consumeRateLimit({
-      key: `production-restore:${session.user.id}`,
-      max: 1,
-      windowMs: 30 * 60 * 1000,
-    });
-    if (!rate.allowed) throw new AppError({ code: ErrorCodes.RATE_LIMITED });
     const parsed = productionRestoreBodySchema.safeParse(await request.json());
     if (!parsed.success) throw new AppError({ code: ErrorCodes.VALIDATION_ERROR });
     await reauthenticateAdmin(session.user.id, parsed.data.currentPassword);
