@@ -93,7 +93,10 @@ export class AppError extends Error {
     this.name = "AppError";
     this.code = options.code;
     this.referenceId = options.referenceId || createReferenceId();
-    this.userMessage = arabicMessages[options.code];
+    this.userMessage =
+      options.code === ErrorCodes.CONFIGURATION_ERROR && options.message
+        ? options.message
+        : arabicMessages[options.code];
     this.httpStatus = options.httpStatus ?? defaultStatus(options.code);
     this.retryable = options.retryable ?? false;
     if (options.cause) {

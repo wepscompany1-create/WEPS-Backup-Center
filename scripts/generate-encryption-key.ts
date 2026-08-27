@@ -2,5 +2,10 @@
 import { randomBytes } from "node:crypto";
 
 const key = randomBytes(32);
-console.log("hex:", key.toString("hex"));
-console.log("base64:", key.toString("base64"));
+process.stdout.write("hex: ");
+process.stdout.write(key.toString("hex"));
+process.stdout.write("\nbase64: ");
+process.stdout.write(key.toString("base64"));
+process.stdout.write(
+  "\nPaste the hex value into BACKUP_ENCRYPTION_KEY with no quotes, spaces, or hex: prefix.\n",
+);

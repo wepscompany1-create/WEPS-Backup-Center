@@ -21,8 +21,8 @@ npx prisma generate
 echo "Running database migrations"
 npx prisma migrate deploy
 
-echo "Bootstrapping admin"
-npx tsx scripts/bootstrap-admin.ts
+echo "Ensuring admin account"
+npx tsx scripts/ensure-admin.ts
 
 echo "Starting WEPS Backup Center on 0.0.0.0:${PORT}"
 export HOSTNAME=0.0.0.0

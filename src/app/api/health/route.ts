@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { getEnv } from "@/lib/config/env";
+import { collectConfigurationIssues, blockingConfigurationCodes } from "@/lib/config/checklist";
+import { buildHealthSnapshot } from "@/lib/config/health";
 import { getPgClientVersions } from "@/lib/postgres/source";
 import { applySecurityHeaders } from "@/lib/security/headers";
 
@@ -25,23 +27,27 @@ export async function GET() {
   }
 
   const tools = await getPgClientVersions();
-  let sourceConnected = false;
+  let sourceHealth = {
+    connected: false,
+    incompatible: false,
+  };
   try {
     const { getSourceHealth } = await import("@/lib/postgres/source");
-    sourceConnected = (await getSourceHealth()).connected;
+    sourceHealth = await getSourceHealth();
   } catch {
-    sourceConnected = false;
+    sourceHealth = { connected: false, incompatible: false };
   }
 
-  const payload = {
-    status: appDb ? "ok" : "degraded",
-    app: true,
+  const env = getEnv();
+  const payload = buildHealthSnapshot({
     appDb,
     diskWritable,
     pgTools: Boolean(tools),
-    sourceDb: sourceConnected,
-    timezone: getEnv().APP_TIMEZONE,
-  };
+    sourceConnected: sourceHealth.connected,
+    sourceIncompatible: sourceHealth.incompatible,
+    blockingIssueCodes: blockingConfigurationCodes(collectConfigurationIssues(env)),
+    timezone: env.APP_TIMEZONE,
+  });
 
   const response = NextResponse.json(payload, { status: 200 });
   return applySecurityHeaders(response);

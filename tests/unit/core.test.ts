@@ -18,9 +18,19 @@ import {
 } from "@/lib/postgres/url";
 import { computeNextScheduledBackupAt, isValidLocalTime } from "@/lib/scheduler/next-run";
 import { selectBackupsToDelete } from "@/features/backup/retention";
-import { sanitizeErrorMessage } from "@/lib/errors";
+import { ErrorCodes, sanitizeErrorMessage } from "@/lib/errors";
 import { resolveBackupPath } from "@/lib/storage/paths";
 import { loadEnv, resetEnvCache } from "@/lib/config/env";
+import {
+  assertBackupAllowedFromIssues,
+  collectConfigurationIssues,
+  publicBlockingConfigurationIssues,
+} from "@/lib/config/checklist";
+import { buildHealthSnapshot } from "@/lib/config/health";
+import { isPlaceholderSecret } from "@/lib/config/secrets";
+import { getBackupDisabledReason, getSourceStatusCard } from "@/features/backup/readiness";
+import { assertSourceReadyForBackup } from "@/features/backup/preflight";
+import { AppError, toUserError } from "@/lib/errors";
 import {
   createPublicUrl,
   resolveAuthRedirect,
@@ -35,8 +45,12 @@ describe("encryption key parsing", () => {
     expect(parseEncryptionKey(base64)).toHaveLength(32);
   });
 
-  it("rejects short keys", () => {
+  it("rejects short keys, placeholders, and imprecise base64", () => {
+    const placeholder = "REPLACE_WITH_A_NEW_64_CHARACTER_RANDOM_HEX_KEY";
     expect(() => parseEncryptionKey("abc")).toThrow();
+    expect(() => parseEncryptionKey(placeholder)).toThrow(/placeholder/);
+    expect(() => parseEncryptionKey(`${Buffer.alloc(32, 7).toString("base64")}!!!`)).toThrow();
+    expect(() => parseEncryptionKey(Buffer.alloc(31, 1).toString("base64"))).toThrow();
   });
 });
 
@@ -176,6 +190,28 @@ describe("env production guards", () => {
     ).toThrow(/AUTH_SECRET/);
   });
 
+  it("rejects placeholder AUTH_SECRET in production", () => {
+    expect(() =>
+      loadEnv({
+        NODE_ENV: "production",
+        AUTH_SECRET: "REPLACE_WITH_A_NEW_64_CHARACTER_RANDOM_HEX_VALUE",
+        APP_URL: "https://weps-backup-center.onrender.com",
+      }),
+    ).toThrow(/placeholder/);
+  });
+
+  it("rejects reusing the backup encryption key as AUTH_SECRET", () => {
+    const shared = "ab".repeat(32);
+    expect(() =>
+      loadEnv({
+        NODE_ENV: "production",
+        AUTH_SECRET: shared,
+        BACKUP_ENCRYPTION_KEY: shared,
+        APP_URL: "https://weps-backup-center.onrender.com",
+      }),
+    ).toThrow(/reuse BACKUP_ENCRYPTION_KEY/);
+  });
+
   it("normalizes the production public origin", () => {
     const env = loadEnv({
       NODE_ENV: "production",
@@ -196,6 +232,172 @@ describe("env production guards", () => {
     };
     expect(() => loadEnv({ ...base, APP_URL: "http://localhost:3000" })).toThrow(/public HTTPS/);
     expect(() => loadEnv({ ...base, APP_URL: "http://weps.example.com" })).toThrow(/public HTTPS/);
+  });
+});
+
+describe("configuration issues block backups", () => {
+  const validHex = "ab".repeat(32);
+  const ready = {
+    isProduction: true,
+    DATABASE_URL: "postgres://u:p@backup-db:5432/backup_center",
+    SOURCE_DATABASE_URL: "postgres://u:p@source-db:5432/source",
+    BACKUP_ENCRYPTION_KEY: validHex,
+    AUTH_SECRET: "s".repeat(32),
+    RESEND_API_KEY: "re_test_key",
+    RESEND_FROM_EMAIL: "ops@weps.local",
+  };
+
+  it("blocks backup when the encryption key is a placeholder and does not log the value", () => {
+    const placeholder = "REPLACE_WITH_A_NEW_64_CHARACTER_RANDOM_HEX_KEY";
+    const issues = collectConfigurationIssues({
+      ...ready,
+      BACKUP_ENCRYPTION_KEY: placeholder,
+    });
+    const blocking = issues.filter((issue) => issue.blocksBackup);
+    expect(blocking.some((issue) => issue.code === ErrorCodes.ENCRYPTION_KEY_INVALID)).toBe(true);
+    expect(JSON.stringify(issues)).not.toContain(placeholder);
+  });
+
+  it("removes the encryption blocker when a valid key is configured", () => {
+    const issues = collectConfigurationIssues(ready);
+    expect(issues.filter((issue) => issue.blocksBackup)).toHaveLength(0);
+    expect(issues.some((issue) => issue.code === ErrorCodes.ENCRYPTION_KEY_INVALID)).toBe(false);
+  });
+
+  it("treats known placeholder database URLs as missing", () => {
+    expect(isPlaceholderSecret("REPLACE_WITH_BACKUP_CENTER_INTERNAL_DATABASE_URL")).toBe(true);
+    const issues = collectConfigurationIssues({
+      ...ready,
+      DATABASE_URL: "REPLACE_WITH_BACKUP_CENTER_INTERNAL_DATABASE_URL",
+      SOURCE_DATABASE_URL: "REPLACE_WITH_SOURCE_INTERNAL_DATABASE_URL",
+    });
+    expect(issues.some((issue) => issue.code === "DATABASE_URL" && issue.blocksBackup)).toBe(true);
+    expect(issues.some((issue) => issue.code === "SOURCE_DATABASE_URL" && issue.blocksBackup)).toBe(true);
+  });
+
+  it("produces safe API details containing only blocking issues", () => {
+    const placeholder = "REPLACE_WITH_A_NEW_64_CHARACTER_RANDOM_HEX_KEY";
+    const publicIssues = publicBlockingConfigurationIssues(
+      collectConfigurationIssues({ ...ready, BACKUP_ENCRYPTION_KEY: placeholder }),
+    );
+    expect(publicIssues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: ErrorCodes.ENCRYPTION_KEY_INVALID, blocksBackup: true }),
+      ]),
+    );
+    expect(JSON.stringify(publicIssues)).not.toContain(placeholder);
+    expect(publicIssues.some((issue) => issue.code === "RESEND")).toBe(false);
+  });
+
+  it("prevents backup enqueue when the key is invalid and clears the blocker for a valid key", () => {
+    const placeholder = "REPLACE_WITH_A_NEW_64_CHARACTER_RANDOM_HEX_KEY";
+    expect(() =>
+      assertBackupAllowedFromIssues(
+        collectConfigurationIssues({ ...ready, BACKUP_ENCRYPTION_KEY: placeholder }),
+      ),
+    ).toThrow(AppError);
+
+    try {
+      assertBackupAllowedFromIssues(
+        collectConfigurationIssues({ ...ready, BACKUP_ENCRYPTION_KEY: placeholder }),
+      );
+    } catch (error) {
+      const parsed = toUserError(error);
+      expect(parsed.code).toBe(ErrorCodes.CONFIGURATION_ERROR);
+      expect(parsed.message).toMatch(/مفتاح التشفير/);
+      expect(parsed.message).not.toContain(placeholder);
+    }
+
+    expect(() => assertBackupAllowedFromIssues(collectConfigurationIssues(ready))).not.toThrow();
+  });
+});
+
+describe("dashboard backup readiness", () => {
+  const ready = {
+    jobs: { backup: false, restore: false },
+    issues: [],
+    source: { connected: true, incompatible: false },
+  };
+
+  it("allows backup only when the source is connected and compatible", () => {
+    expect(getBackupDisabledReason(ready)).toBeNull();
+    expect(
+      getBackupDisabledReason({ ...ready, source: { connected: false, incompatible: false } }),
+    ).toMatch(/غير متصلة/);
+    expect(
+      getBackupDisabledReason({ ...ready, source: { connected: true, incompatible: true } }),
+    ).toMatch(/pg_dump/);
+  });
+
+  it("prioritizes configuration blockers before runtime source state", () => {
+    expect(
+      getBackupDisabledReason({
+        ...ready,
+        issues: [{ message: "مفتاح التشفير غير صالح", blocksBackup: true }],
+        source: { connected: false, incompatible: false },
+      }),
+    ).toBe("مفتاح التشفير غير صالح");
+  });
+
+  it("shows an incompatible source instead of connected", () => {
+    expect(
+      getSourceStatusCard({ connected: true, incompatible: true, serverVersion: "16.4" }),
+    ).toEqual({
+      value: "غير متوافق",
+      badge: "INCOMPATIBLE",
+      helper: "إصدار pg_dump أقدم من الخادم (16.4)",
+    });
+  });
+});
+
+describe("backup API preflight", () => {
+  it("rejects disconnected or incompatible sources before a job is created", () => {
+    expect(() => assertSourceReadyForBackup({ connected: false, incompatible: false })).toThrow(
+      /SOURCE_DB_UNREACHABLE/,
+    );
+    expect(() => assertSourceReadyForBackup({ connected: true, incompatible: true })).toThrow(
+      /PG_VERSION_INCOMPATIBLE/,
+    );
+    expect(() => assertSourceReadyForBackup({ connected: true, incompatible: false })).not.toThrow();
+  });
+});
+
+describe("health backup readiness", () => {
+  const healthy = {
+    appDb: true,
+    diskWritable: true,
+    pgTools: true,
+    sourceConnected: true,
+    sourceIncompatible: false,
+    blockingIssueCodes: [] as string[],
+    timezone: "Asia/Aden",
+  };
+
+  it("is ok only when config, disk, tools, and source are ready", () => {
+    expect(buildHealthSnapshot(healthy)).toMatchObject({
+      status: "ok",
+      backupReady: true,
+      sourceCompatible: true,
+      issueCodes: [],
+    });
+  });
+
+  it("marks degraded for blocking config, unwritable disk, or incompatible source", () => {
+    expect(
+      buildHealthSnapshot({ ...healthy, blockingIssueCodes: [ErrorCodes.ENCRYPTION_KEY_INVALID] }),
+    ).toMatchObject({
+      status: "degraded",
+      backupReady: false,
+      blockingIssueCodes: [ErrorCodes.ENCRYPTION_KEY_INVALID],
+    });
+    expect(buildHealthSnapshot({ ...healthy, diskWritable: false }).issueCodes).toContain(
+      "DISK_NOT_WRITABLE",
+    );
+    expect(buildHealthSnapshot({ ...healthy, sourceIncompatible: true })).toMatchObject({
+      status: "degraded",
+      backupReady: false,
+      sourceCompatible: false,
+    });
   });
 });
 

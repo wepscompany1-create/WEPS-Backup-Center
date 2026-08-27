@@ -12,6 +12,7 @@ import { StatusBadge, backupStageLabel } from "@/components/status-badge";
 import { formatBytes } from "@/lib/format";
 import { ConfirmBackupDialog } from "@/features/backup/confirm-backup-dialog";
 import { JobProgress } from "@/features/backup/job-progress";
+import { getBackupDisabledReason, getSourceStatusCard } from "@/features/backup/readiness";
 
 type DashboardData = {
   source: { connected: boolean; latencyMs: number | null; serverVersion: string | null; incompatible: boolean };
@@ -84,11 +85,7 @@ export function DashboardView() {
 
   const backupDisabledReason = useMemo(() => {
     if (!data) return "جارٍ التحميل";
-    if (data.jobs.backup) return "توجد عملية نسخ قيد التنفيذ";
-    if (data.jobs.restore) return "يوجد اختبار استعادة قيد التنفيذ";
-    const blocking = data.issues.find((issue) => issue.blocksBackup);
-    if (blocking) return blocking.message;
-    return null;
+    return getBackupDisabledReason(data);
   }, [data]);
 
   async function startBackup() {
@@ -98,6 +95,7 @@ export function DashboardView() {
         jobId?: string;
         code?: string;
         message?: string;
+        issues?: { message: string; blocksBackup: boolean }[];
       };
       if (response.status === 401 || json.code === "UNAUTHORIZED") {
         toast.error("انتهت الجلسة. سيتم تحويلك إلى تسجيل الدخول.");
@@ -105,7 +103,8 @@ export function DashboardView() {
         return;
       }
       if (!response.ok || !json.jobId) {
-        toast.error(json.message || "تعذر بدء النسخ الاحتياطي");
+        const blockingIssue = json.issues?.find((issue) => issue.blocksBackup);
+        toast.error(blockingIssue?.message || json.message || "تعذر بدء النسخ الاحتياطي");
         return;
       }
       setJobId(json.jobId);
@@ -147,7 +146,10 @@ export function DashboardView() {
         </Button>
       </div>
       {backupDisabledReason ? (
-        <p className="text-sm text-muted-foreground">الزر معطّل: {backupDisabledReason}</p>
+        <Alert variant="destructive">
+          <AlertTitle>النسخ متوقف حتى يُصلح الإعداد</AlertTitle>
+          <AlertDescription>{backupDisabledReason}</AlertDescription>
+        </Alert>
       ) : null}
 
       <Alert>
@@ -158,12 +160,17 @@ export function DashboardView() {
       </Alert>
 
       {data.issues.length > 0 ? (
-        <Alert>
-          <AlertTitle>قائمة إعدادات ناقصة</AlertTitle>
+        <Alert variant={data.issues.some((issue) => issue.blocksBackup) ? "destructive" : "default"}>
+          <AlertTitle>
+            {data.issues.some((issue) => issue.blocksBackup) ? "إعدادات تمنع النسخ" : "تنبيهات إعدادات"}
+          </AlertTitle>
           <AlertDescription>
             <ul className="mt-2 list-disc pe-5">
               {data.issues.map((issue) => (
-                <li key={issue.code}>{issue.message}</li>
+                <li key={issue.code}>
+                  {issue.blocksBackup ? "يمنع النسخ — " : ""}
+                  {issue.message}
+                </li>
               ))}
             </ul>
           </AlertDescription>
@@ -179,7 +186,7 @@ export function DashboardView() {
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatusCard title="قاعدة البيانات الأساسية" value={data.source.connected ? "متصلة" : "غير متصلة"} badge={data.source.connected ? "CONNECTED" : "OFFLINE"} helper={data.source.serverVersion || "—"} />
+        <StatusCard title="قاعدة البيانات الأساسية" {...getSourceStatusCard(data.source)} />
         <StatusCard title="آخر نسخة ناجحة" value={formatWhen(data.lastSuccess?.completedAt ?? null, data.timezone)} helper={data.lastSuccess ? "اكتملت بنجاح" : "لا توجد نسخ بعد"} />
         <StatusCard title="موعد النسخة القادمة" value={data.scheduleEnabled ? formatWhen(data.nextScheduledBackupAt, data.timezone) : "متوقف"} helper={`${data.backupLocalTime} — ${data.timezone}`} />
         <StatusCard title="عدد النسخ" value={`${data.backupCount} / ${data.retention}`} helper="ضمن سياسة الاحتفاظ" />
@@ -202,7 +209,16 @@ export function DashboardView() {
           <p>النسخ التلقائي: {data.scheduleEnabled ? "مفعّل" : "متوقف"}</p>
           <p>الجدول: كل يومين الساعة {data.backupLocalTime}</p>
           <p>بريد التنبيهات: {data.notificationEmail || "غير مضبوط"}</p>
-          <p>صحة النظام: {data.jobs.busy ? "عملية قيد التنفيذ" : data.source.connected ? "جاهز" : "المصدر غير متصل"}</p>
+          <p>
+            صحة النظام:{" "}
+            {data.jobs.busy
+              ? "عملية قيد التنفيذ"
+              : backupDisabledReason
+                ? "غير جاهز للنسخ"
+                : data.source.connected
+                  ? "جاهز"
+                  : "المصدر غير متصل"}
+          </p>
         </CardContent>
       </Card>
 

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 import { hydrateProcessEnvFromFiles } from "@/lib/config/hydrate-env";
+import { isPlaceholderSecret, isUsableSecret } from "@/lib/config/secrets";
 
 const optionalUrl = z
   .string()
@@ -85,8 +86,17 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const isBuildTime =
     process.env.NEXT_PHASE === "phase-production-build" ||
     process.env.NEXT_PHASE === "phase-development-build";
-  if (isProduction && !parsed.AUTH_SECRET && !isBuildTime) {
-    throw new Error("AUTH_SECRET is required in production (min 32 characters)");
+  if (isProduction && !isBuildTime) {
+    if (!isUsableSecret(parsed.AUTH_SECRET, 32)) {
+      throw new Error("AUTH_SECRET is required in production (min 32 characters, not a placeholder)");
+    }
+    if (
+      parsed.BACKUP_ENCRYPTION_KEY &&
+      !isPlaceholderSecret(parsed.BACKUP_ENCRYPTION_KEY) &&
+      parsed.AUTH_SECRET?.trim() === parsed.BACKUP_ENCRYPTION_KEY.trim()
+    ) {
+      throw new Error("AUTH_SECRET must not reuse BACKUP_ENCRYPTION_KEY");
+    }
   }
   const configuredAppUrl = parsed.APP_URL || parsed.AUTH_URL || parsed.NEXTAUTH_URL;
   if (isProduction && !configuredAppUrl && !isBuildTime) {

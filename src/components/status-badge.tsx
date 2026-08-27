@@ -14,6 +14,7 @@ const map: Record<string, { label: string; className: string; icon: typeof Check
   SCHEDULED: { label: "تلقائي", className: "bg-slate-500/15 text-slate-700 dark:text-slate-300", icon: CircleDashed },
   CONNECTED: { label: "متصل", className: "bg-emerald-700/15 text-emerald-800 dark:text-emerald-300", icon: Wifi },
   OFFLINE: { label: "غير متصل", className: "bg-red-600/15 text-red-700 dark:text-red-300", icon: Unplug },
+  INCOMPATIBLE: { label: "غير متوافق", className: "bg-amber-600/15 text-amber-800 dark:text-amber-300", icon: ShieldAlert },
 };
 
 export function StatusBadge({ value }: { value: string }) {

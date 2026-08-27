@@ -8,13 +8,19 @@ import { applySecurityHeaders } from "@/lib/security/headers";
 import { consumeRateLimit } from "@/lib/security/rate-limit";
 import { serializeBackup } from "@/features/backup/serialize";
 import { backupsQuerySchema } from "@/lib/validation/api";
+import { getConfigurationIssues } from "@/lib/config/issues";
+import { publicBlockingConfigurationIssues } from "@/lib/config/checklist";
 
 export const runtime = "nodejs";
 
 function jsonError(error: unknown) {
-  const parsed = error instanceof AppError ? toUserError(error) : toUserError(error);
+  const parsed = toUserError(error);
   const status = error instanceof AppError ? error.httpStatus : 500;
-  return applySecurityHeaders(NextResponse.json(parsed, { status }));
+  const issues =
+    error instanceof AppError && error.code === ErrorCodes.CONFIGURATION_ERROR
+      ? publicBlockingConfigurationIssues(getConfigurationIssues())
+      : undefined;
+  return applySecurityHeaders(NextResponse.json({ ...parsed, ...(issues ? { issues } : {}) }, { status }));
 }
 
 export async function GET(request: Request) {

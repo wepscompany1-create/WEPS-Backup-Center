@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db/prisma";
 import { acquireJobLock, anyHeavyJobRunning } from "@/lib/db/locks";
 import { getEnv } from "@/lib/config/env";
 import { assertBackupAllowed } from "@/lib/config/issues";
+import { assertSourceReadyForBackup } from "@/features/backup/preflight";
 import { parseEncryptionKey } from "@/lib/crypto/key";
 import { encryptFileAes256Gcm, verifyEncryptedFileChecksum } from "@/lib/crypto/aes";
 import { sha256File } from "@/lib/crypto/checksum";
@@ -38,6 +39,7 @@ export async function enqueueBackup(options: {
   userAgent?: string | null;
 }) {
   assertBackupAllowed();
+  assertSourceReadyForBackup(await getSourceHealth());
   const running = await anyHeavyJobRunning();
   if (running.busy) {
     throw new AppError({
@@ -97,12 +99,7 @@ export async function runBackupJob(backupId: string) {
 
     await ensureBackupDir();
     const source = await getSourceHealth();
-    if (!source.connected) {
-      throw new AppError({ code: ErrorCodes.SOURCE_DB_UNREACHABLE });
-    }
-    if (source.incompatible) {
-      throw new AppError({ code: ErrorCodes.PG_VERSION_INCOMPATIBLE });
-    }
+    assertSourceReadyForBackup(source);
 
     const connection = parsePostgresUrl(env.SOURCE_DATABASE_URL!);
     const pgEnv = toPgEnv(connection);

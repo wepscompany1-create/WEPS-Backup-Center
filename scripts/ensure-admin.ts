@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword, verifyPassword } from "../src/lib/auth/password";
 import { hydrateProcessEnvFromFiles } from "../src/lib/config/hydrate-env";
+import { isPlaceholderSecret } from "../src/lib/config/secrets";
 
 hydrateProcessEnvFromFiles();
 
@@ -13,6 +14,9 @@ async function main() {
   }
   if (!email || !password) {
     throw new Error("ADMIN_EMAIL or ADMIN_PASSWORD is missing");
+  }
+  if (isPlaceholderSecret(password) || password.trim().length < 12) {
+    throw new Error("ADMIN_PASSWORD looks like a placeholder or is shorter than 12 characters");
   }
 
   const prisma = new PrismaClient({ datasourceUrl });
