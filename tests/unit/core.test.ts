@@ -46,6 +46,12 @@ import {
   productionRestoreDropPreviousSchema,
 } from "@/lib/validation/api";
 import { matchesProductionRestorePhrase } from "@/features/restore/confirmation";
+import {
+  classifyRenameFailure,
+  isCutoverEligibleStatus,
+  productionRestoreActions,
+  shouldMarkExternalCutover,
+} from "@/features/restore/production-restore-policy";
 import { isTrustedOrigin } from "@/lib/security/trusted-origin";
 
 describe("encryption key parsing", () => {
@@ -209,6 +215,51 @@ describe("production database safety invariants", () => {
     );
     expect(source).not.toMatch(/pg_terminate_backend[^`]*originalDatabaseName/);
     expect(source).not.toMatch(/DROP DATABASE[^`]*originalDatabaseName/);
+    expect(source).not.toMatch(/markExternalCutover\([^)]*CUTOVER_ACTIVE_CONNECTIONS/);
+    expect(source).toContain("recordRetryableCutoverFailure");
+    expect(source).toContain("shouldMarkExternalCutover");
+  });
+});
+
+describe("production restore cutover retry policy", () => {
+  const ready = {
+    validationCompleted: true,
+    cutoverCompleted: false,
+    rollbackAvailableUntil: null,
+    previousDatabaseName: null,
+    previousDroppedAt: null,
+  };
+
+  it("does not lock the record on active-connection failures", () => {
+    expect(classifyRenameFailure("ERROR:  database is being accessed by other users")).toBe(
+      ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS,
+    );
+    expect(shouldMarkExternalCutover(ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS)).toBe(false);
+    expect(
+      productionRestoreActions({ ...ready, status: "AWAITING_CUTOVER" }).canCutover,
+    ).toBe(true);
+  });
+
+  it("keeps canCutover after a 409 for open connections or a stuck external record", () => {
+    expect(
+      productionRestoreActions({ ...ready, status: "AWAITING_CUTOVER" }).canCutover,
+    ).toBe(true);
+    expect(
+      productionRestoreActions({ ...ready, status: "AWAITING_EXTERNAL_CUTOVER" }).canCutover,
+    ).toBe(true);
+    expect(isCutoverEligibleStatus("AWAITING_CUTOVER")).toBe(true);
+    expect(isCutoverEligibleStatus("AWAITING_EXTERNAL_CUTOVER")).toBe(true);
+    expect(isCutoverEligibleStatus("FAILED")).toBe(false);
+  });
+
+  it("still locks external cutover when rename permission is denied", () => {
+    expect(classifyRenameFailure("ERROR:  must be owner of database production")).toBe(
+      ErrorCodes.CUTOVER_PERMISSION_DENIED,
+    );
+    expect(classifyRenameFailure("permission denied to rename database")).toBe(
+      ErrorCodes.CUTOVER_PERMISSION_DENIED,
+    );
+    expect(shouldMarkExternalCutover(ErrorCodes.CUTOVER_PERMISSION_DENIED)).toBe(true);
   });
 });
 

@@ -56,7 +56,7 @@ The only permitted mutation of the live source name is step 2 inside this contro
 
 ## Rename failure and compensation
 
-- First rename fails: original remains live and candidate remains intact. Permission/provider/connection failures move to `AWAITING_EXTERNAL_CUTOVER`.
+- First rename fails: original remains live and candidate remains intact. Active-connection failures stay retryable in `AWAITING_CUTOVER`; only permission or provider rename denial moves to `AWAITING_EXTERNAL_CUTOVER`.
 - First rename succeeds, second fails: attempt exactly one checked compensation rename from the registered previous name back to the now-absent original name.
 - Compensation succeeds: production returns to its original name; record failure and keep the candidate.
 - Compensation fails: enter `ROLLBACK_REQUIRED`, emit critical audit/email/UI signals, and perform no DROP or speculative retry.

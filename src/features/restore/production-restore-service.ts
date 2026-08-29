@@ -28,10 +28,17 @@ import {
   type PostgresConnection,
 } from "@/lib/postgres/url";
 import { createTempDumpPath, resolveBackupPath, safeUnlink } from "@/lib/storage/paths";
-import { AppError, ErrorCodes, sanitizeErrorMessage, toUserError } from "@/lib/errors";
+import { AppError, ErrorCodes, toUserError } from "@/lib/errors";
 import { audit, AuditActions } from "@/lib/audit";
 import { childLogger } from "@/lib/logger";
 import { notifyProductionRestore } from "@/features/notifications/email-service";
+import {
+  classifyRenameFailure,
+  isCutoverEligibleStatus,
+  shouldMarkExternalCutover,
+} from "@/features/restore/production-restore-policy";
+
+export { productionRestoreActions } from "@/features/restore/production-restore-policy";
 
 const RESTORE_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -299,7 +306,7 @@ export async function cutoverProductionRestore(options: RequestContext & {
   });
   if (!restore) throw new AppError({ code: ErrorCodes.PRODUCTION_RESTORE_NOT_FOUND });
   if (
-    restore.status !== "AWAITING_CUTOVER" ||
+    !isCutoverEligibleStatus(restore.status) ||
     !restore.validationCompleted ||
     restore.backup.backupNumber !== options.backupNumber
   ) {
@@ -322,7 +329,7 @@ export async function cutoverProductionRestore(options: RequestContext & {
     }
     const active = await activeConnections(maintenance, restore.originalDatabaseName);
     if (active > 0) {
-      await markExternalCutover(restore.id, ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS);
+      await recordRetryableCutoverFailure(restore.id);
       throw new AppError({ code: ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS });
     }
     await prisma.productionRestore.update({
@@ -336,6 +343,9 @@ export async function cutoverProductionRestore(options: RequestContext & {
         previousDatabaseName,
         progressStage: "CUTOVER_RENAMING_ORIGINAL",
         originalRenameStartedAt: new Date(),
+        errorCode: null,
+        errorMessage: null,
+        errorReferenceId: null,
       },
     });
     await event(restore.id, "CUTOVER_RENAMING_ORIGINAL", "WARNING", "CUTOVER_RENAME_ORIGINAL");
@@ -346,7 +356,11 @@ export async function cutoverProductionRestore(options: RequestContext & {
     );
     if (first.code !== 0) {
       const code = classifyRenameFailure(first.stderr);
-      await markExternalCutover(restore.id, code);
+      if (shouldMarkExternalCutover(code)) {
+        await markExternalCutover(restore.id);
+      } else {
+        await recordRetryableCutoverFailure(restore.id);
+      }
       throw new AppError({ code });
     }
     await prisma.productionRestore.update({
@@ -422,6 +436,9 @@ export async function cutoverProductionRestore(options: RequestContext & {
         cutoverCompleted: true,
         cutoverCompletedAt: completedAt,
         completedAt,
+        errorCode: null,
+        errorMessage: null,
+        errorReferenceId: null,
         durationMs: completedAt.getTime() - (restore.startedAt ?? startedAt).getTime(),
         rollbackAvailableUntil: new Date(
           completedAt.getTime() + settings.productionRestoreRollbackRetentionHours * 3_600_000,
@@ -523,24 +540,6 @@ export async function dropPreviousProductionDatabase(options: RequestContext & {
   }
 }
 
-export function productionRestoreActions(restore: {
-  status: ProductionRestoreStatus;
-  validationCompleted: boolean;
-  cutoverCompleted: boolean;
-  rollbackAvailableUntil: Date | null;
-  previousDatabaseName: string | null;
-  previousDroppedAt: Date | null;
-}) {
-  return {
-    canCutover: restore.status === "AWAITING_CUTOVER" && restore.validationCompleted,
-    canDropPrevious:
-      restore.status === "SUCCESS" &&
-      restore.cutoverCompleted &&
-      Boolean(restore.previousDatabaseName) &&
-      !restore.previousDroppedAt &&
-      Boolean(restore.rollbackAvailableUntil && restore.rollbackAvailableUntil <= new Date()),
-  };
-}
 
 async function stage(
   restoreId: string,
@@ -682,13 +681,27 @@ async function activeConnections(connection: PostgresConnection, databaseName: s
   return Number(result.stdout.trim() || "0");
 }
 
-async function markExternalCutover(restoreId: string, code: string) {
-  const appError = new AppError({
-    code:
-      code === ErrorCodes.CUTOVER_PERMISSION_DENIED
-        ? ErrorCodes.CUTOVER_PERMISSION_DENIED
-        : ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS,
+async function recordRetryableCutoverFailure(restoreId: string) {
+  const appError = new AppError({ code: ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS });
+  await prisma.productionRestore.update({
+    where: { id: restoreId },
+    data: {
+      status: "AWAITING_CUTOVER",
+      progressStage: "AWAITING_CUTOVER",
+      previousDatabaseName: null,
+      errorCode: appError.code,
+      errorMessage: appError.userMessage,
+      errorReferenceId: appError.referenceId,
+    },
   });
+  await event(restoreId, "AWAITING_CUTOVER", "WARNING", "CUTOVER_ACTIVE_CONNECTIONS", {
+    code: appError.code,
+    referenceId: appError.referenceId,
+  });
+}
+
+async function markExternalCutover(restoreId: string) {
+  const appError = new AppError({ code: ErrorCodes.CUTOVER_PERMISSION_DENIED });
   await prisma.productionRestore.update({
     where: { id: restoreId },
     data: {
@@ -703,13 +716,6 @@ async function markExternalCutover(restoreId: string, code: string) {
     code: appError.code,
     referenceId: appError.referenceId,
   });
-}
-
-function classifyRenameFailure(stderr: string) {
-  const safe = sanitizeErrorMessage(stderr).toLowerCase();
-  return safe.includes("permission") || safe.includes("must be owner")
-    ? ErrorCodes.CUTOVER_PERMISSION_DENIED
-    : ErrorCodes.CUTOVER_ACTIVE_CONNECTIONS;
 }
 
 function literal(value: string) {

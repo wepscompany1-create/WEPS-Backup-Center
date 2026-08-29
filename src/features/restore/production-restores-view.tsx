@@ -36,6 +36,7 @@ type RestoreRow = {
 type Detail = RestoreRow & {
   originalDatabaseName: string;
   tableCount: number | null;
+  errorCode: string | null;
   errorMessage: string | null;
   criticalState: string | null;
   events: Array<{
@@ -157,12 +158,22 @@ export function ProductionRestoresView() {
                   </AlertDescription>
                 </Alert>
               ) : null}
-              {detail.status === "AWAITING_EXTERNAL_CUTOVER" ? (
+              {detail.errorMessage ? (
+                <p className="text-sm">{detail.errorMessage}</p>
+              ) : null}
+              {detail.errorCode === "CUTOVER_ACTIVE_CONNECTIONS" ? (
+                <Alert>
+                  <AlertTitle>اتصالات مفتوحة على قاعدة الإنتاج</AlertTitle>
+                  <AlertDescription>
+                    أوقف خدمة التطبيق المصدر على Render، صفِّ الاتصالات، ثم أعد «بدء التبديل».
+                  </AlertDescription>
+                </Alert>
+              ) : detail.status === "AWAITING_EXTERNAL_CUTOVER" ? (
                 <Alert>
                   <AlertTitle>التبديل الخارجي مطلوب</AlertTitle>
                   <AlertDescription>
-                    تعذر RENAME بأمان. حدّث DATABASE_URL للتطبيق المصدر إلى القاعدة
-                    المرشحة خارج مركز النسخ ثم أعد تشغيله وفق دليل التشغيل.
+                    رفض المزود إعادة التسمية. اترك المرشحة واتبع تبديل DATABASE_URL الخارجي
+                    كما في docs/RENDER_DEPLOYMENT.md.
                   </AlertDescription>
                 </Alert>
               ) : null}
@@ -231,6 +242,7 @@ function DestructiveActionDialog({
   const [number, setNumber] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const requiredPhrase = action === "cutover" ? "تبديل-الإنتاج" : "حذف-قاعدة-التراجع";
   const valid =
     acknowledged &&
@@ -243,6 +255,7 @@ function DestructiveActionDialog({
     setPhrase("");
     setNumber("");
     setPassword("");
+    setSubmitError(null);
   }, [action]);
 
   async function submit() {
@@ -260,7 +273,9 @@ function DestructiveActionDialog({
       });
       const json = await response.json();
       if (!response.ok) {
-        toast.error(json.message || "تعذر تنفيذ الإجراء");
+        const message = json.message || "تعذر تنفيذ الإجراء";
+        setSubmitError(message);
+        toast.error(message);
         return;
       }
       toast.success(action === "cutover" ? "اكتملت محاولة التبديل" : "تم حذف قاعدة التراجع");
@@ -283,6 +298,12 @@ function DestructiveActionDialog({
               : "هذا الإجراء نهائي ويلغي إمكانية الرجوع إلى القاعدة السابقة."}
           </DialogDescription>
         </DialogHeader>
+        {submitError ? (
+          <Alert variant="destructive">
+            <AlertTitle>{action === "cutover" ? "تعذر التبديل" : "تعذر حذف قاعدة التراجع"}</AlertTitle>
+            <AlertDescription>{submitError}</AlertDescription>
+          </Alert>
+        ) : null}
         <div className="space-y-4">
           <div className="flex items-start gap-3">
             <Checkbox
