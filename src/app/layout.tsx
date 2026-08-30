@@ -20,6 +20,10 @@ const mono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "WEPS Backup Center",
   description: "مركز إدارة النسخ الاحتياطية لقواعد البيانات",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
